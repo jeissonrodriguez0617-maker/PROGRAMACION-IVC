@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Programación de Operativos - IVC Engativá</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://operativos-ivc-default-rtdb.firebaseio.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Pathway+Gothic+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -4397,9 +4401,27 @@
                 // Ordenar por número de semana
                 equiposDisponibilidadDB.sort((a, b) => (a.numero || 0) - (b.numero || 0));
             }
-            // Re-renderizar cronograma para actualizar resaltado de disponibilidad
-            if (typeof aplicarFiltroGlobal === 'function') aplicarFiltroGlobal();
+            // Re-renderizar cronograma para actualizar resaltado de disponibilidad (agrupado)
+            _programarRender(false);
         });
+
+        // Agrupa renders: varios listeners de Firebase responden casi a la vez al abrir la app
+        var _renderTimer = null, _renderNecesitaCompleto = false;
+        function _programarRender(completo) {
+            if (completo) _renderNecesitaCompleto = true;
+            if (_renderTimer) return;
+            _renderTimer = setTimeout(function() {
+                _renderTimer = null;
+                var full = _renderNecesitaCompleto;
+                _renderNecesitaCompleto = false;
+                var _own = !_asigCache;
+                if (_own) _asigCache = new WeakMap();
+                try {
+                    if (full && typeof window.__renderDatosOperativos === 'function') window.__renderDatosOperativos();
+                    else if (typeof aplicarFiltroGlobal === 'function') aplicarFiltroGlobal();
+                } finally { if (_own) _asigCache = null; }
+            }, 80);
+        }
 
         // ══════════════════════════════════════════════════════════
         // SISTEMA DE FILTRADO GLOBAL POR SEMANA
@@ -5295,7 +5317,18 @@
         var ROTACION_VENTANA_DIAS = 45;         // ± días que se miran para equilibrar la rotación
 
         // Personas asignadas a la actividad (sin repetir), con su rol y celular
+        var _asigCache = null; // activo solo durante un render completo
         function _asignadosOp(op) {
+            if (op && _asigCache) {
+                var _h = _asigCache.get(op);
+                if (_h) return _h;
+                var _r = _asignadosOpRaw(op);
+                _asigCache.set(op, _r);
+                return _r;
+            }
+            return _asignadosOpRaw(op);
+        }
+        function _asignadosOpRaw(op) {
             var out = [], vistos = {};
             if (!op) return out;
             [['profesional', 'Profesional'], ['gestor', 'Gestor'], ['tecnico', 'Técnico']].forEach(function(par) {
@@ -6114,20 +6147,38 @@
 
 
         // ── Sanitización de nombres (tildes, mayúsculas, espacios) ────────────────
+        var _sanitizeCache; // se inicializa de forma perezosa (sanitize se usa antes de esta línea)
         function sanitize(txt) {
             if (!txt) return '';
-            return txt.toString()
+            if (!_sanitizeCache) _sanitizeCache = new Map();
+            var k = typeof txt === 'string' ? txt : txt.toString();
+            var hit = _sanitizeCache.get(k);
+            if (hit !== undefined) return hit;
+            var r = k
                 .normalize('NFD').replace(/[̀-ͯ]/g, '')  // quita tildes/diéresis
                 .toUpperCase()
                 .replace(/\s+/g, ' ')
                 .trim();
+            if (_sanitizeCache.size > 20000) _sanitizeCache.clear();
+            _sanitizeCache.set(k, r);
+            return r;
         }
 
 
         // ── Disponibilidad semanal: helpers ────────────────────────────────
         // Devuelve el set (Set<string sanitized>) de personas de disponibilidad
         // que corresponden a una fecha dada
+        var _dispCache;
         function getDisponiblesSemana(fecha) {
+            if (!_dispCache) _dispCache = { ref: null, map: new Map() };
+            if (_dispCache.ref !== equiposDisponibilidadDB) { _dispCache.ref = equiposDisponibilidadDB; _dispCache.map = new Map(); }
+            var _c = _dispCache.map.get(fecha);
+            if (_c) return _c;
+            _c = _getDisponiblesSemanaRaw(fecha);
+            _dispCache.map.set(fecha, _c);
+            return _c;
+        }
+        function _getDisponiblesSemanaRaw(fecha) {
             if (!equiposDisponibilidadDB || equiposDisponibilidadDB.length === 0) return new Set();
             var equipo = equiposDisponibilidadDB.find(function(e) {
                 if (e.fechaInicio && e.fechaFin) {
@@ -6843,16 +6894,7 @@
 
         // FIN SELECTOR PERSONALIZADO
 
-        // Escuchar cambios en tiempo real
-        onValue(operativosRef, (snapshot) => {
-            operativos = [];
-            snapshot.forEach((childSnapshot) => {
-                operativos.push({
-                    id: childSnapshot.key,
-                    ...childSnapshot.val()
-                });
-            });
-            
+        window.__renderDatosOperativos = function() {
             // Generar opciones de semanas (restaura el select con la semana activa)
             generarOpcionesSemanas();
 
@@ -6863,6 +6905,19 @@
             calcularStatsPersonal();
             if (window.aplicarFiltrosFaltantes) { try { window.aplicarFiltrosFaltantes(); } catch(e) {} }
             if (window.aplicarFiltroAsistencia) { try { window.aplicarFiltroAsistencia(); } catch(e) {} }
+        };
+
+        // Escuchar cambios en tiempo real
+        onValue(operativosRef, (snapshot) => {
+            operativos = [];
+            snapshot.forEach((childSnapshot) => {
+                operativos.push({
+                    id: childSnapshot.key,
+                    ...childSnapshot.val()
+                });
+            });
+            
+            _programarRender(true);
             
             // Detectar si hay un parámetro edit en la URL
             const urlParams = new URLSearchParams(window.location.search);
@@ -7319,6 +7374,12 @@
         }
 
         function renderOperativos(data = operativos) {
+            var _own = !_asigCache;
+            if (_own) _asigCache = new WeakMap();
+            try { return _renderOperativosImpl(data); }
+            finally { if (_own) _asigCache = null; }
+        }
+        function _renderOperativosImpl(data) {
             const tbody = document.getElementById('operativosBody');
             
             if (data.length === 0) {
@@ -15300,9 +15361,9 @@
     </script>
 
     <!-- jsPDF Library -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
 
     <!-- Modal Detalle de Faltantes por Contratista -->
