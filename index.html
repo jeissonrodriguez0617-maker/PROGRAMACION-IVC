@@ -4,10 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Programación de Operativos - IVC Engativá</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
-    <link rel="preconnect" href="https://operativos-ivc-default-rtdb.firebaseio.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Pathway+Gothic+One&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -2039,10 +2035,13 @@
       <div style="background:#fff;border-radius:16px;padding:2rem;width:100%;max-width:380px;box-shadow:0 20px 50px rgba(0,0,0,.35);font-family:'Inter',sans-serif;">
         <h2 style="color:#1e3a8a;margin-bottom:.25rem;font-size:1.3rem;">Programación de Operativos</h2>
         <p style="color:#64748b;margin-bottom:1.25rem;font-size:.9rem;">IVC Engativá · Acceso restringido</p>
+        <div id="loginCheck" style="color:#64748b;font-size:.95rem;padding:1rem 0;text-align:center;">Verificando sesión…</div>
+        <div id="loginForm" style="display:none;">
         <input id="loginEmail" type="email" placeholder="Correo" autocomplete="username" style="width:100%;padding:.7rem;margin-bottom:.7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
         <input id="loginPass" type="password" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')loginIVC()" style="width:100%;padding:.7rem;margin-bottom:.7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
         <div id="loginMsg" style="color:#ef4444;font-size:.85rem;min-height:1.2rem;margin-bottom:.5rem;"></div>
         <button onclick="loginIVC()" style="width:100%;padding:.75rem;background:#1e3a8a;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:1rem;cursor:pointer;">Ingresar</button>
+        </div>
       </div>
     </div>
     <button id="btnCerrarSesion" onclick="logoutIVC()" style="display:none;position:fixed;bottom:12px;left:12px;z-index:9000;background:#1e293b;color:#fff;border:none;padding:.4rem .8rem;border-radius:8px;font-size:.8rem;cursor:pointer;opacity:.85;">Cerrar sesión</button>
@@ -4145,7 +4144,7 @@
 
 
     <script type="module">        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { initializeAuth, browserSessionPersistence, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getDatabase, ref, push, set, get, onValue, remove, update } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
 
 
@@ -4344,7 +4343,7 @@
 
         // Inicializar Firebase
         const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
+        const auth = initializeAuth(app, { persistence: browserSessionPersistence });
         const database = getDatabase(app);
         window.__firebaseDatabase = database; // Reutilizada por el módulo de Gestión de Equipos de Disponibilidad
         const operativosRef = ref(database, 'operativos');
@@ -4353,7 +4352,11 @@
         onAuthStateChanged(auth, (user) => {
             const ov = document.getElementById('loginOverlay');
             const btn = document.getElementById('btnCerrarSesion');
+            const chk = document.getElementById('loginCheck');
+            const frm = document.getElementById('loginForm');
+            if (chk) chk.style.display = 'none';
             if (!user) {
+                if (frm) frm.style.display = 'block';
                 if (ov) ov.style.display = 'flex';
                 if (btn) btn.style.display = 'none';
             } else {
@@ -4372,7 +4375,13 @@
                 await signInWithEmailAndPassword(auth, email, pass);
                 window.location.reload(); // recarga para que los listeners de datos se conecten ya autenticados
             } catch (e) {
-                msg.textContent = 'Correo o contraseña incorrectos.';
+                const c = (e && e.code) || '';
+                if (c === 'auth/unauthorized-domain') msg.textContent = 'Dominio no autorizado en Firebase (Authentication → Configuración → Dominios autorizados).';
+                else if (c === 'auth/operation-not-allowed') msg.textContent = 'El acceso por correo/contraseña no está habilitado en Firebase.';
+                else if (c === 'auth/too-many-requests') msg.textContent = 'Demasiados intentos. Espera unos minutos e intenta de nuevo.';
+                else if (c === 'auth/network-request-failed') msg.textContent = 'Sin conexión. Revisa tu internet.';
+                else if (c === 'auth/invalid-email') msg.textContent = 'El formato del correo no es válido.';
+                else msg.textContent = 'Correo o contraseña incorrectos. (' + c + ')';
             }
         };
 
@@ -4401,27 +4410,9 @@
                 // Ordenar por número de semana
                 equiposDisponibilidadDB.sort((a, b) => (a.numero || 0) - (b.numero || 0));
             }
-            // Re-renderizar cronograma para actualizar resaltado de disponibilidad (agrupado)
-            _programarRender(false);
+            // Re-renderizar cronograma para actualizar resaltado de disponibilidad
+            if (typeof aplicarFiltroGlobal === 'function') aplicarFiltroGlobal();
         });
-
-        // Agrupa renders: varios listeners de Firebase responden casi a la vez al abrir la app
-        var _renderTimer = null, _renderNecesitaCompleto = false;
-        function _programarRender(completo) {
-            if (completo) _renderNecesitaCompleto = true;
-            if (_renderTimer) return;
-            _renderTimer = setTimeout(function() {
-                _renderTimer = null;
-                var full = _renderNecesitaCompleto;
-                _renderNecesitaCompleto = false;
-                var _own = !_asigCache;
-                if (_own) _asigCache = new WeakMap();
-                try {
-                    if (full && typeof window.__renderDatosOperativos === 'function') window.__renderDatosOperativos();
-                    else if (typeof aplicarFiltroGlobal === 'function') aplicarFiltroGlobal();
-                } finally { if (_own) _asigCache = null; }
-            }, 80);
-        }
 
         // ══════════════════════════════════════════════════════════
         // SISTEMA DE FILTRADO GLOBAL POR SEMANA
@@ -5317,18 +5308,7 @@
         var ROTACION_VENTANA_DIAS = 45;         // ± días que se miran para equilibrar la rotación
 
         // Personas asignadas a la actividad (sin repetir), con su rol y celular
-        var _asigCache = null; // activo solo durante un render completo
         function _asignadosOp(op) {
-            if (op && _asigCache) {
-                var _h = _asigCache.get(op);
-                if (_h) return _h;
-                var _r = _asignadosOpRaw(op);
-                _asigCache.set(op, _r);
-                return _r;
-            }
-            return _asignadosOpRaw(op);
-        }
-        function _asignadosOpRaw(op) {
             var out = [], vistos = {};
             if (!op) return out;
             [['profesional', 'Profesional'], ['gestor', 'Gestor'], ['tecnico', 'Técnico']].forEach(function(par) {
@@ -6147,38 +6127,20 @@
 
 
         // ── Sanitización de nombres (tildes, mayúsculas, espacios) ────────────────
-        var _sanitizeCache; // se inicializa de forma perezosa (sanitize se usa antes de esta línea)
         function sanitize(txt) {
             if (!txt) return '';
-            if (!_sanitizeCache) _sanitizeCache = new Map();
-            var k = typeof txt === 'string' ? txt : txt.toString();
-            var hit = _sanitizeCache.get(k);
-            if (hit !== undefined) return hit;
-            var r = k
+            return txt.toString()
                 .normalize('NFD').replace(/[̀-ͯ]/g, '')  // quita tildes/diéresis
                 .toUpperCase()
                 .replace(/\s+/g, ' ')
                 .trim();
-            if (_sanitizeCache.size > 20000) _sanitizeCache.clear();
-            _sanitizeCache.set(k, r);
-            return r;
         }
 
 
         // ── Disponibilidad semanal: helpers ────────────────────────────────
         // Devuelve el set (Set<string sanitized>) de personas de disponibilidad
         // que corresponden a una fecha dada
-        var _dispCache;
         function getDisponiblesSemana(fecha) {
-            if (!_dispCache) _dispCache = { ref: null, map: new Map() };
-            if (_dispCache.ref !== equiposDisponibilidadDB) { _dispCache.ref = equiposDisponibilidadDB; _dispCache.map = new Map(); }
-            var _c = _dispCache.map.get(fecha);
-            if (_c) return _c;
-            _c = _getDisponiblesSemanaRaw(fecha);
-            _dispCache.map.set(fecha, _c);
-            return _c;
-        }
-        function _getDisponiblesSemanaRaw(fecha) {
             if (!equiposDisponibilidadDB || equiposDisponibilidadDB.length === 0) return new Set();
             var equipo = equiposDisponibilidadDB.find(function(e) {
                 if (e.fechaInicio && e.fechaFin) {
@@ -6894,19 +6856,6 @@
 
         // FIN SELECTOR PERSONALIZADO
 
-        window.__renderDatosOperativos = function() {
-            // Generar opciones de semanas (restaura el select con la semana activa)
-            generarOpcionesSemanas();
-
-            // Renderizar respetando filtroGlobal en memoria
-            actualizarUIFiltroSemana();
-            filterOperativos();
-            updateStats();
-            calcularStatsPersonal();
-            if (window.aplicarFiltrosFaltantes) { try { window.aplicarFiltrosFaltantes(); } catch(e) {} }
-            if (window.aplicarFiltroAsistencia) { try { window.aplicarFiltroAsistencia(); } catch(e) {} }
-        };
-
         // Escuchar cambios en tiempo real
         onValue(operativosRef, (snapshot) => {
             operativos = [];
@@ -6917,7 +6866,16 @@
                 });
             });
             
-            _programarRender(true);
+            // Generar opciones de semanas (restaura el select con la semana activa)
+            generarOpcionesSemanas();
+
+            // Renderizar respetando filtroGlobal en memoria
+            actualizarUIFiltroSemana();
+            filterOperativos();
+            updateStats();
+            calcularStatsPersonal();
+            if (window.aplicarFiltrosFaltantes) { try { window.aplicarFiltrosFaltantes(); } catch(e) {} }
+            if (window.aplicarFiltroAsistencia) { try { window.aplicarFiltroAsistencia(); } catch(e) {} }
             
             // Detectar si hay un parámetro edit en la URL
             const urlParams = new URLSearchParams(window.location.search);
@@ -7374,12 +7332,6 @@
         }
 
         function renderOperativos(data = operativos) {
-            var _own = !_asigCache;
-            if (_own) _asigCache = new WeakMap();
-            try { return _renderOperativosImpl(data); }
-            finally { if (_own) _asigCache = null; }
-        }
-        function _renderOperativosImpl(data) {
             const tbody = document.getElementById('operativosBody');
             
             if (data.length === 0) {
@@ -15361,9 +15313,9 @@
     </script>
 
     <!-- jsPDF Library -->
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     
 
     <!-- Modal Detalle de Faltantes por Contratista -->
