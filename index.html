@@ -2040,10 +2040,25 @@
         <input id="loginEmail" type="email" placeholder="Correo" autocomplete="username" style="width:100%;padding:.7rem;margin-bottom:.7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
         <input id="loginPass" type="password" placeholder="Contraseña" autocomplete="current-password" onkeydown="if(event.key==='Enter')loginIVC()" style="width:100%;padding:.7rem;margin-bottom:.7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
         <div id="loginMsg" style="color:#ef4444;font-size:.85rem;min-height:1.2rem;margin-bottom:.5rem;"></div>
-        <button onclick="loginIVC()" style="width:100%;padding:.75rem;background:#1e3a8a;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:1rem;cursor:pointer;">Ingresar</button>
+        <button id="btnIngresar" onclick="loginIVC()" style="width:100%;padding:.75rem;background:#1e3a8a;color:#fff;border:none;border-radius:8px;font-weight:600;font-size:1rem;cursor:pointer;">Ingresar</button>
         </div>
       </div>
     </div>
+    <script>
+      // Muestra el formulario al instante si no hay sesión guardada en esta pestaña (evita esperar a que cargue toda la app)
+      (function () {
+        try {
+          var hay = false;
+          for (var i = 0; i < sessionStorage.length; i++) {
+            if (sessionStorage.key(i).indexOf('firebase:authUser:') === 0) { hay = true; break; }
+          }
+          if (!hay) {
+            document.getElementById('loginCheck').style.display = 'none';
+            document.getElementById('loginForm').style.display = 'block';
+          }
+        } catch (e) {}
+      })();
+    </script>
     <button id="btnCerrarSesion" onclick="logoutIVC()" style="display:none;position:fixed;bottom:12px;left:12px;z-index:9000;background:#1e293b;color:#fff;border:none;padding:.4rem .8rem;border-radius:8px;font-size:.8rem;cursor:pointer;opacity:.85;">Cerrar sesión</button>
 
     <div class="loading-overlay" id="loadingOverlay">
@@ -2563,6 +2578,7 @@
                     <button onclick="window.abrirGestionContratistas()" class="_sb-item">👥 Gestión de Contratistas</button>
                     <button onclick="window.mostrarEncuesta()" class="_sb-item">📊 Encuesta Disponibilidad</button>
                     <button onclick="window.abrirImportarExcel()" class="_sb-item">📥 Importar Excel</button>
+                    <button onclick="window.abrirLimpieza()" class="_sb-item">🧹 Limpieza de datos</button>
                 </div>
             </div>
 
@@ -4077,13 +4093,15 @@
             <!-- Multi-select faltantes -->
             <div id="faltContratistaWrap" style="position:relative;">
               <button id="faltContratistaBtn" onclick="window.toggleFaltContratistaMenu()" style="width:100%;height:36px;padding:0 10px;border:1.5px solid #fca5a5;border-radius:8px;background:white;font-size:0.82rem;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px;text-align:left;">
-                <span id="faltContratistaLabel" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">— Todos —</span>
+                <span id="faltContratistaLabel" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Todos los contratistas</span>
                 <span style="font-size:0.7rem;flex-shrink:0;">▼</span>
               </button>
               <div id="faltContratistaMenu" style="display:none;position:absolute;top:40px;left:0;z-index:20010;background:white;border:1.5px solid #fca5a5;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.15);min-width:260px;max-height:320px;overflow-y:auto;padding:6px 0;">
-                <div style="padding:4px 10px 6px;display:flex;gap:6px;border-bottom:1px solid #fef2f2;">
-                  <button onclick="window.faltSelTodos()" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;border:1px solid #fca5a5;background:#fff7f7;cursor:pointer;color:#b91c1c;font-weight:600;">✅ Todos</button>
-                  <button onclick="window.faltSelNinguno()" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;border:1px solid #fca5a5;background:#fff7f7;cursor:pointer;color:#b91c1c;font-weight:600;">✖ Ninguno</button>
+                <div style="padding:6px 10px;border-bottom:1px solid #fef2f2;position:sticky;top:0;background:white;z-index:1;">
+                  <input type="text" id="faltContratistaBuscar" placeholder="🔍 Buscar contratista..." oninput="window.faltBuscarContratista(this.value)" autocomplete="off" style="width:100%;padding:5px 8px;border:1.5px solid #fca5a5;border-radius:6px;font-size:0.8rem;box-sizing:border-box;">
+                  <div style="display:flex;gap:6px;margin-top:6px;">
+                    <button onclick="window.faltSelNinguno()" style="font-size:0.72rem;padding:2px 8px;border-radius:5px;border:1px solid #fca5a5;background:#fff7f7;cursor:pointer;color:#b91c1c;font-weight:600;">✖ Limpiar selección (ver todos)</button>
+                  </div>
                 </div>
                 <div id="faltContratistaOpciones" style="padding:4px 0;"></div>
               </div>
@@ -4093,22 +4111,16 @@
           </div>
           <div style="min-width:150px;">
             <label style="display:block;font-size:0.78rem;font-weight:700;color:#7f1d1d;margin-bottom:4px;">📅 FECHA INICIO</label>
-            <input type="date" id="faltFechaInicio" style="width:100%;padding:0.55rem 0.75rem;border:1.5px solid #fca5a5;border-radius:8px;font-size:0.85rem;">
+            <input type="date" id="faltFechaInicio" onchange="aplicarFiltrosFaltantes()" oninput="aplicarFiltrosFaltantes()" style="width:100%;padding:0.55rem 0.75rem;border:1.5px solid #fca5a5;border-radius:8px;font-size:0.85rem;">
           </div>
           <div style="min-width:150px;">
             <label style="display:block;font-size:0.78rem;font-weight:700;color:#7f1d1d;margin-bottom:4px;">📅 FECHA FIN</label>
-            <input type="date" id="faltFechaFin" style="width:100%;padding:0.55rem 0.75rem;border:1.5px solid #fca5a5;border-radius:8px;font-size:0.85rem;">
-          </div>
-          <div style="min-width:160px;">
-            <label style="display:block;font-size:0.78rem;font-weight:700;color:#7f1d1d;margin-bottom:4px;">⏰ Fecha límite</label>
-            <input type="date" id="faltFechaLimite" style="width:100%;padding:0.55rem 0.75rem;border:1.5px solid #fca5a5;border-radius:8px;font-size:0.85rem;background:white;">
+            <input type="date" id="faltFechaFin" onchange="aplicarFiltrosFaltantes()" oninput="aplicarFiltrosFaltantes()" style="width:100%;padding:0.55rem 0.75rem;border:1.5px solid #fca5a5;border-radius:8px;font-size:0.85rem;">
           </div>
           <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-            <button onclick="aplicarFiltrosFaltantes()" style="background:#dc2626;color:white;border:none;padding:0.55rem 1.2rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;">🔍 Aplicar</button>
             <button onclick="limpiarFiltrosFaltantes()" style="background:#6b7280;color:white;border:none;padding:0.55rem 1rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;">↺ Limpiar</button>
             <button onclick="generarPDFFaltantes()" style="background:#1e40af;color:white;border:none;padding:0.55rem 1.2rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;">📄 Descargar PDF</button>
             <button onclick="window.faltAsignarMasivo()" title="Asigna responsable por rotación a las actividades del rango que aún no lo tienen" style="background:#ea580c;color:white;border:none;padding:0.55rem 1.2rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;white-space:nowrap;">🔄 Asignar responsables</button>
-            <button onclick="window.enviarYDescargarTodos()" style="background:#25D366;color:white;border:none;padding:0.55rem 1.2rem;border-radius:8px;font-weight:700;cursor:pointer;font-size:0.85rem;white-space:nowrap;">📲 WA + PDF a todos</button>
           </div>
         </div>
 
@@ -4372,9 +4384,13 @@
             msg.textContent = '';
             if (!email || !pass) { msg.textContent = 'Ingresa correo y contraseña.'; return; }
             try {
+                const btnIn = document.getElementById('btnIngresar');
+                if (btnIn) { btnIn.disabled = true; btnIn.textContent = 'Ingresando…'; }
                 await signInWithEmailAndPassword(auth, email, pass);
-                window.location.reload(); // recarga para que los listeners de datos se conecten ya autenticados
+                // onAuthStateChanged oculta la pantalla de acceso; no se recarga la página
             } catch (e) {
+                const btnIn2 = document.getElementById('btnIngresar');
+                if (btnIn2) { btnIn2.disabled = false; btnIn2.textContent = 'Ingresar'; }
                 const c = (e && e.code) || '';
                 if (c === 'auth/unauthorized-domain') msg.textContent = 'Dominio no autorizado en Firebase (Authentication → Configuración → Dominios autorizados).';
                 else if (c === 'auth/operation-not-allowed') msg.textContent = 'El acceso por correo/contraseña no está habilitado en Firebase.';
@@ -4388,6 +4404,105 @@
         window.logoutIVC = async function () {
             await signOut(auth);
             window.location.reload();
+        };
+
+        // ===== LIMPIEZA DE DATOS (borra operativos dentro de un rango de fechas, con respaldo automático) =====
+        const _LIMP_HASH = "6863e12a0dd2e09546fcb0305c09454cab6f750c9ba75e55da3f2a4d7de8da5d";
+
+        function _limpEl(id) { return document.getElementById(id); }
+
+        async function _limpSha(txt) {
+            const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('ivc-limpieza:' + txt));
+            return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+        }
+
+        window.abrirLimpieza = function () {
+            const d = new Date();
+            d.setMonth(d.getMonth() - 3);
+            _limpEl('limpiezaDesde').value = '';
+            _limpEl('limpiezaHasta').value = d.toISOString().slice(0, 10);
+            _limpEl('limpiezaClave').value = '';
+            _limpEl('limpiezaResultado').innerHTML = '';
+            _limpEl('modalLimpieza').style.display = 'flex';
+            window.limpiezaCalcular();
+        };
+
+        window.cerrarLimpieza = function () {
+            _limpEl('modalLimpieza').style.display = 'none';
+        };
+
+        async function _limpBuscar() {
+            const desde = _limpEl('limpiezaDesde').value;
+            const hasta = _limpEl('limpiezaHasta').value;
+            if (!hasta) throw new Error('Elige la fecha "Hasta".');
+            if (desde && desde > hasta) throw new Error('"Desde" no puede ser posterior a "Hasta".');
+            const snap = await get(operativosRef);
+            const all = snap.val() || {};
+            const ids = [], resp = {};
+            let total = 0, sinFecha = 0, min = null, max = null;
+            Object.keys(all).forEach(function (id) {
+                total++;
+                const f = (all[id] && all[id].fecha) || '';
+                if (!f) { sinFecha++; return; }
+                if ((!desde || f >= desde) && f <= hasta) {
+                    ids.push(id); resp[id] = all[id];
+                    if (min === null || f < min) min = f;
+                    if (max === null || f > max) max = f;
+                }
+            });
+            return { ids: ids, resp: resp, total: total, sinFecha: sinFecha, min: min, max: max, desde: desde, hasta: hasta };
+        }
+
+        window.limpiezaCalcular = async function () {
+            const out = _limpEl('limpiezaResultado');
+            out.textContent = 'Calculando…';
+            try {
+                const r = await _limpBuscar();
+                if (!r.ids.length) {
+                    out.innerHTML = 'No hay operativos en ese rango. Total en la base de datos: ' + r.total + '.';
+                    return;
+                }
+                out.innerHTML = 'Se eliminarían <b style="color:#dc2626;">' + r.ids.length + '</b> operativos (del ' + r.min + ' al ' + r.max + ').<br>' +
+                    'Se conservan <b>' + (r.total - r.ids.length) + '</b>' + (r.sinFecha ? ' (' + r.sinFecha + ' sin fecha no se tocan)' : '') + '.';
+            } catch (e) {
+                out.textContent = e && e.message ? e.message : String(e);
+            }
+        };
+
+        window.limpiezaBorrar = async function () {
+            const out = _limpEl('limpiezaResultado');
+            const btn = _limpEl('btnLimpiezaBorrar');
+            try {
+                const clave = _limpEl('limpiezaClave').value;
+                if (!clave) { out.textContent = 'Escribe la contraseña.'; return; }
+                if ((await _limpSha(clave)) !== _LIMP_HASH) { out.textContent = '❌ Contraseña incorrecta.'; return; }
+
+                btn.disabled = true;
+                const r = await _limpBuscar();
+                if (!r.ids.length) { out.textContent = 'No hay operativos en ese rango.'; btn.disabled = false; return; }
+                if (!window.confirm('Se eliminarán ' + r.ids.length + ' operativos (del ' + r.min + ' al ' + r.max + ').\n\nSe descargará un respaldo antes de borrar. ¿Continuar?')) { btn.disabled = false; return; }
+
+                // Respaldo automático antes de borrar
+                const blob = new Blob([JSON.stringify(r.resp, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'respaldo_operativos_' + r.min + '_a_' + r.max + '.json';
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(function () { URL.revokeObjectURL(a.href); }, 3000);
+
+                const total = r.ids.length;
+                for (let i = 0; i < total; i += 300) {
+                    const updates = {};
+                    r.ids.slice(i, i + 300).forEach(function (id) { updates[id] = null; });
+                    await update(operativosRef, updates);
+                    out.textContent = 'Eliminando… ' + Math.min(i + 300, total) + ' de ' + total;
+                }
+                _limpEl('limpiezaClave').value = '';
+                out.innerHTML = '✅ Listo: se eliminaron <b>' + total + '</b> operativos. El respaldo quedó en tu carpeta de descargas.';
+            } catch (e) {
+                out.textContent = '❌ No se pudo eliminar: ' + (e && e.message ? e.message : e);
+            }
+            btn.disabled = false;
         };
 
         let editingId = null;
@@ -5496,7 +5611,7 @@
                     chk.type = 'checkbox';
                     chk.className = 'falt-con-chk';
                     chk.value = sanitize(n);
-                    chk.checked = true;  // por defecto TODOS marcados
+                    chk.checked = false;  // ninguno marcado = se muestran todos
                     chk.style.cssText = 'width:14px;height:14px;accent-color:#dc2626;flex-shrink:0;';
                     chk.onchange = function(){ window.faltActualizarLabel(); aplicarFiltrosFaltantes(); };
                     var txt = document.createElement('span');
@@ -5507,6 +5622,7 @@
                 });
             }
             window.faltActualizarLabel();
+            var _bq = document.getElementById('faltContratistaBuscar'); if (_bq) _bq.value = '';
 
             // Rango de fechas: semana actual como default
             var fi = filtroGlobal && filtroGlobal.semanaInicio ? filtroGlobal.semanaInicio : '';
@@ -5529,6 +5645,10 @@
 
         window.limpiarFiltrosFaltantes = function() {
             document.getElementById('faltFiltroContratista').value = '';
+            document.querySelectorAll('.falt-con-chk').forEach(function(c){ c.checked = false; });
+            var _bq = document.getElementById('faltContratistaBuscar');
+            if (_bq) { _bq.value = ''; window.faltBuscarContratista(''); }
+            window.faltActualizarLabel();
             document.getElementById('faltFechaInicio').value = '';
             document.getElementById('faltFechaFin').value = '';
             aplicarFiltrosFaltantes();
@@ -5552,6 +5672,12 @@
             return '-';
         }
 
+        // Actividades de supervisión administrativas/operativas: no cuentan como faltantes
+        function _faltEsSupervision(tipo) {
+            var t = sanitize(tipo || '');
+            return t.indexOf('SUPERVISION') >= 0 && t.indexOf('ACTIVIDADES') >= 0;
+        }
+
         window.aplicarFiltrosFaltantes = function() {
             var fi = document.getElementById('faltFechaInicio').value;
             var ff = document.getElementById('faltFechaFin').value;
@@ -5569,6 +5695,7 @@
 
             operativos.forEach(function(op) {
                 if (op.estado && op.estado.toUpperCase() === 'CANCELADO') return;
+                if (_faltEsSupervision(op.tipoIVC)) return;
                 if (fi && op.fecha < fi) return;
                 if (ff && op.fecha > ff) return;
 
@@ -5602,7 +5729,7 @@
                 }
 
                 // Filtro por contratista (un responsable que ya no está en la lista siempre se muestra)
-                if (vigentes[rs] && seleccionadosSan.length > 0 && seleccionadosSan.indexOf(rs) < 0) return;
+                if (seleccionadosSan.length > 0 && seleccionadosSan.indexOf(rs) < 0) return;
 
                 base.nombre = resp;
                 base.rol = 'Responsable';
@@ -5693,9 +5820,7 @@
                     '<td style="padding:9px 12px;">' + faltHTML + '</td>' +
                     '<td style="padding:9px 12px;text-align:center;" onclick="event.stopPropagation();">' +
                         '<div style="display:flex;flex-direction:column;gap:4px;align-items:center;">' +
-                        '<button onclick="window.abrirDetalleOperativo(\'' + r.opId + '\')" style="background:#0f766e;color:white;border:none;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;">ℹ️ Detalle</button>' +
                         '<button onclick="abrirControlEntregables(' + i + ')" style="background:#1d4ed8;color:white;border:none;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;">📋 Entregables</button>' +
-                        '<button onclick="window.enviarYDescargarFaltante(' + i + ')" style="background:#25D366;color:white;border:none;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;">📲 WA + PDF</button>' +
                         '</div>' +
                     '</td></tr>';
             });
@@ -5718,6 +5843,7 @@
             var ff = document.getElementById('faltFechaFin').value;
             var lista = operativos.filter(function(op) {
                 if (op.estado && op.estado.toUpperCase() === 'CANCELADO') return false;
+                if (_faltEsSupervision(op.tipoIVC)) return false;
                 if (fi && op.fecha < fi) return false;
                 if (ff && op.fecha > ff) return false;
                 return _asignadosOp(op).length >= 2 && getResponsableOp(op) === '';
@@ -14339,331 +14465,26 @@
             }
         });
         window.faltActualizarLabel = function() {
-            var chks    = document.querySelectorAll('.falt-con-chk:checked');
-            var total   = document.querySelectorAll('.falt-con-chk').length;
-            var lbl     = document.getElementById('faltContratistaLabel');
-            var btn     = document.getElementById('faltContratistaBtn');
+            var chks  = document.querySelectorAll('.falt-con-chk:checked');
+            var lbl   = document.getElementById('faltContratistaLabel');
+            var btn   = document.getElementById('faltContratistaBtn');
             if (!lbl) return;
-            if (chks.length === 0)           { lbl.textContent = 'Ninguno'; if(btn) btn.style.borderColor='#9ca3af'; }
-            else if (chks.length === total)  { lbl.textContent = 'Todos (' + total + ')'; if(btn) btn.style.borderColor='#fca5a5'; }
-            else if (chks.length === 1)      { lbl.textContent = chks[0].closest('label').querySelector('span').textContent; if(btn) btn.style.borderColor='#dc2626'; }
-            else                             { lbl.textContent = chks.length + ' de ' + total; if(btn) btn.style.borderColor='#dc2626'; }
+            if (chks.length === 0)      { lbl.textContent = 'Todos los contratistas'; if(btn) btn.style.borderColor='#fca5a5'; }
+            else if (chks.length === 1) { lbl.textContent = chks[0].closest('label').querySelector('span').textContent; if(btn) btn.style.borderColor='#dc2626'; }
+            else                        { lbl.textContent = chks.length + ' contratistas seleccionados'; if(btn) btn.style.borderColor='#dc2626'; }
         };
-        window.faltSelTodos = function() {
-            document.querySelectorAll('.falt-con-chk').forEach(function(c){ c.checked = true; });
-            window.faltActualizarLabel();
-            aplicarFiltrosFaltantes();
+        window.faltBuscarContratista = function(q) {
+            var n = sanitize(q || '');
+            document.querySelectorAll('#faltContratistaOpciones label').forEach(function(l) {
+                l.style.display = (!n || sanitize(l.textContent).indexOf(n) >= 0) ? 'flex' : 'none';
+            });
         };
         window.faltSelNinguno = function() {
             document.querySelectorAll('.falt-con-chk').forEach(function(c){ c.checked = false; });
+            var bq = document.getElementById('faltContratistaBuscar');
+            if (bq) { bq.value = ''; window.faltBuscarContratista(''); }
             window.faltActualizarLabel();
             aplicarFiltrosFaltantes();
-        };
-
-        // ── WhatsApp Faltantes ───────────────────────────────────────────
-        function _getCelularContratista(nombre) {
-            var n = sanitize(nombre);
-            var found = null;
-            ['profesional','gestor','tecnico'].forEach(function(cat) {
-                (personalData[cat] || []).forEach(function(p) {
-                    if (sanitize(p.nombre) === n) found = _celValido(p.celular);
-                });
-            });
-            return found || '';
-        }
-
-        function _generarMensajeFaltante(r) {
-            var fechaLimite = document.getElementById('faltFechaLimite')
-                ? document.getElementById('faltFechaLimite').value : '';
-            var fechaLimiteTxt = '';
-            if (fechaLimite) {
-                var fl = new Date(fechaLimite + 'T00:00:00');
-                fechaLimiteTxt = fl.toLocaleDateString('es-CO', { weekday:'long', day:'2-digit', month:'long' });
-            }
-            var msg = '';
-            var _nom1 = r.nombre.split(' ');
-            msg += 'Hola ' + _nom1[0] + ' ' + (_nom1[1]||'') + ', buen dia.\n';
-            msg += 'Eres el responsable de entregar las actas y el registro de las siguientes actividades. Te hace falta:\n\n';
-            msg += '*ENTREGABLES PENDIENTES - IVC ENGATIVA*\n\n';
-            msg += '*Fecha:* ' + r.fechaTxt + '\n';
-            msg += '*Operativo:* ' + r.tipoIVC + '\n';
-            msg += '*Responsable:* ' + r.nombre + '\n';
-            if (r.acompTxt) msg += '*Te acompañaron:* ' + r.acompTxt + '\n';
-            msg += '\n';
-            msg += '*Faltantes:*\n';
-            r.faltantes.forEach(function(f) { msg += '  - ' + f + '\n'; });
-            if (fechaLimiteTxt) {
-                msg += '\n*Fecha limite de entrega:* ' + fechaLimiteTxt + '\n';
-            }
-            msg += '\n*Por favor regulariza a la mayor brevedad posible.*\n';
-            msg += '\n_Inspeccion, Vigilancia y Control - Alcaldia Local de Engativa_';
-            return msg;
-        }
-
-        // Genera PDF individual de faltantes para una persona
-        function _generarPDFFaltantePersona(nombre, rows) {
-            if (!window.jspdf) return;
-            var _jsPDF = window.jspdf.jsPDF;
-            var doc = new _jsPDF('p', 'mm', 'a4');
-            var pw = doc.internal.pageSize.getWidth();
-
-            // Encabezado
-            doc.setFillColor(220, 38, 38);
-            doc.rect(0, 0, pw, 22, 'F');
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(12);
-            doc.setTextColor(255, 255, 255);
-            doc.text('ALCALDÍA LOCAL DE ENGATIVÁ — IVC', pw/2, 9, { align:'center' });
-            doc.setFontSize(9);
-            doc.text('REPORTE DE ENTREGABLES FALTANTES', pw/2, 16, { align:'center' });
-
-            doc.setTextColor(0, 0, 0);
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(11);
-            doc.text(nombre, 15, 30);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(8);
-            doc.setTextColor(100, 100, 100);
-            doc.text('Generado: ' + new Date().toLocaleDateString('es-CO') + ' ' + new Date().toLocaleTimeString('es-CO'), 15, 36);
-
-            var fechaLimite = document.getElementById('faltFechaLimite') ? document.getElementById('faltFechaLimite').value : '';
-            var fechaLimiteTxt = '';
-            if (fechaLimite) {
-                var _fl = new Date(fechaLimite + 'T00:00:00');
-                fechaLimiteTxt = _fl.toLocaleDateString('es-CO', { weekday:'long', day:'2-digit', month:'long' });
-                doc.setTextColor(180, 0, 0);
-                doc.setFont('helvetica', 'bold');
-                doc.text('Fecha límite: ' + fechaLimiteTxt, 15, 42);
-            }
-
-            // Tabla de faltantes con observaciones
-            var cuerpo = rows.map(function(r) {
-                // Obtener observaciones del operativo desde Firebase cache
-                var op = operativos.find(function(o){ return o.id === r.opId; });
-                var obs = (op && op.observacionesEntregables) ? op.observacionesEntregables : '';
-                return [
-                    r.fecha,
-                    r.tipoIVC.substring(0, 55),
-                    r.acompTxt || '-',
-                    r.faltantes.join('\n'),
-                    obs
-                ];
-            });
-
-            doc.autoTable({
-                startY: fechaLimite ? 47 : 41,
-                head: [['FECHA', 'OPERATIVO / ACTIVIDAD', 'ACOMPAÑANTES', 'ENTREGABLES FALTANTES', 'OBSERVACIONES']],
-                body: cuerpo,
-                styles: { fontSize: 7.5, cellPadding: 3, overflow: 'linebreak', valign: 'top' },
-                headStyles: { fillColor: [220, 38, 38], textColor: 255, fontStyle: 'bold', halign: 'center' },
-                columnStyles: {
-                    0: { cellWidth: 22, halign: 'center' },
-                    1: { cellWidth: 44 },
-                    2: { cellWidth: 38 },
-                    3: { cellWidth: 34 },
-                    4: { cellWidth: 'auto' }
-                },
-                alternateRowStyles: { fillColor: [255, 245, 245] },
-                margin: { left: 15, right: 15 },
-                didDrawPage: function(data) {
-                    doc.setFontSize(7); doc.setTextColor(150);
-                    doc.text('IVC Engativá — Faltantes ' + nombre, pw/2, doc.internal.pageSize.height - 5, { align: 'center' });
-                }
-            });
-
-            var sufijo = nombre.replace(/ /g, '_').substring(0, 20);
-            doc.save('faltantes_' + sufijo + '_' + new Date().toISOString().slice(0,10) + '.pdf');
-        }
-
-        // Botón por fila: genera PDF + abre WhatsApp
-        window.enviarYDescargarFaltante = function(rowIdx) {
-            var rows = window._faltRowsRef;
-            if (!rows || !rows[rowIdx]) { alert('Fila no encontrada'); return; }
-            var r = rows[rowIdx];
-            var nombre = r.nombre;
-
-            // Agrupar todos los faltantes de esta persona
-            var rowsPersona = rows.filter(function(x){ return x.nombre === nombre; });
-
-            // 1. Generar PDF
-            _generarPDFFaltantePersona(nombre, rowsPersona);
-
-            // 2. Abrir WhatsApp con mensaje de aviso
-            var cel = _getCelularContratista(nombre);
-            if (!cel) { alert('PDF generado.\nNo se encontró celular para ' + nombre); return; }
-            var fechaLimite = document.getElementById('faltFechaLimite') ? document.getElementById('faltFechaLimite').value : '';
-            var fechaLimiteTxt = '';
-            if (fechaLimite) {
-                var _fl2 = new Date(fechaLimite + 'T00:00:00');
-                fechaLimiteTxt = _fl2.toLocaleDateString('es-CO', { weekday:'long', day:'2-digit', month:'long' });
-            }
-            var _nom = nombre.split(' ');
-            var msg = 'Hola ' + _nom[0] + ' ' + (_nom[1]||'') + ', buen dia.\n';
-            msg += 'Eres el responsable de entregar las actas y el registro de las siguientes actividades. Te hace falta:\n\n';
-            msg += '*ENTREGABLES PENDIENTES - IVC ENGATIVA*\n\n';
-            rowsPersona.forEach(function(rx) {
-                msg += '*' + rx.fechaTxt + '* — ' + rx.tipoIVC + '\n';
-                if (rx.acompTxt) msg += '  _Con: ' + rx.acompTxt + '_\n';
-                rx.faltantes.forEach(function(f){ msg += '  - ' + f + '\n'; });
-                // Añadir observaciones si existen
-                var opX = operativos.find(function(o){ return o.id === rx.opId; });
-                if (opX && opX.observacionesEntregables) {
-                    msg += '  _Obs: ' + opX.observacionesEntregables + '_\n';
-                }
-                msg += '\n';
-            });
-            if (fechaLimiteTxt) msg += '*Fecha limite de entrega:* ' + fechaLimiteTxt + '\n';
-            msg += '\n*Por favor regulariza a la mayor brevedad posible.*\n';
-            msg += '_Inspeccion, Vigilancia y Control - Alcaldia Local de Engativa_\n\n';
-            msg += '_(Se adjunta PDF con el detalle de los faltantes)_';
-
-            setTimeout(function() {
-                var numero = '57' + cel.replace(/[^0-9]/g, '');
-                window.open('https://wa.me/' + numero + '?text=' + encodeURIComponent(msg), '_blank');
-            }, 800);
-        };
-
-        // Botón general: PDF + WhatsApp a todos los contratistas con faltantes
-        window.enviarYDescargarTodos = function() {
-            var rows = window._faltRowsRef;
-            if (!rows || rows.length === 0) { alert('No hay faltantes. Aplica los filtros primero.'); return; }
-
-            // Agrupar por contratista
-            var porCon = {};
-            rows.forEach(function(r) {
-                if (!porCon[r.nombre]) porCon[r.nombre] = [];
-                porCon[r.nombre].push(r);
-            });
-            var contratistas = Object.keys(porCon).sort();
-            var sinCel = [];
-
-            if (!confirm('Se generará 1 PDF y 1 WhatsApp por cada contratista (' + contratistas.length + ').\n\nTen WhatsApp Web abierto.\n\n¿Continuar?')) return;
-
-            var idx = 0;
-            function procesarSiguiente() {
-                if (idx >= contratistas.length) {
-                    if (sinCel.length > 0) alert('Sin celular registrado:\n' + sinCel.join('\n'));
-                    return;
-                }
-                var nombre = contratistas[idx++];
-                var rowsP = porCon[nombre];
-
-                // Generar PDF
-                _generarPDFFaltantePersona(nombre, rowsP);
-
-                // WhatsApp
-                var cel = _getCelularContratista(nombre);
-                if (!cel) { sinCel.push(nombre); setTimeout(procesarSiguiente, 600); return; }
-
-                var fechaLimite = document.getElementById('faltFechaLimite') ? document.getElementById('faltFechaLimite').value : '';
-                var fechaLimiteTxt = '';
-                if (fechaLimite) {
-                    var _flT = new Date(fechaLimite + 'T00:00:00');
-                    fechaLimiteTxt = _flT.toLocaleDateString('es-CO', { weekday:'long', day:'2-digit', month:'long' });
-                }
-                var _nomT = nombre.split(' ');
-                var msg = 'Hola ' + _nomT[0] + ' ' + (_nomT[1]||'') + ', buen dia.\n';
-                msg += 'Eres el responsable de entregar las actas y el registro de las siguientes actividades. Te hace falta:\n\n';
-                msg += '*ENTREGABLES PENDIENTES - IVC ENGATIVA*\n\n';
-                rowsP.forEach(function(rx) {
-                    msg += '*' + rx.fechaTxt + '* — ' + rx.tipoIVC + '\n';
-                if (rx.acompTxt) msg += '  _Con: ' + rx.acompTxt + '_\n';
-                    rx.faltantes.forEach(function(f){ msg += '  - ' + f + '\n'; });
-                    var opX = operativos.find(function(o){ return o.id === rx.opId; });
-                    if (opX && opX.observacionesEntregables) {
-                        msg += '  _Obs: ' + opX.observacionesEntregables + '_\n';
-                    }
-                    msg += '\n';
-                });
-                if (fechaLimiteTxt) msg += '*Fecha limite de entrega:* ' + fechaLimiteTxt + '\n';
-                msg += '\n*Por favor regulariza a la mayor brevedad posible.*\n';
-                msg += '_Inspeccion, Vigilancia y Control - Alcaldia Local de Engativa_\n\n';
-                msg += '_(Se adjunta PDF con el detalle de los faltantes)_';
-
-                setTimeout(function() {
-                    var numero = '57' + cel.replace(/[^0-9]/g, '');
-                    window.open('https://wa.me/' + numero + '?text=' + encodeURIComponent(msg), '_blank');
-                    setTimeout(procesarSiguiente, 1800);
-                }, 600);
-            }
-            procesarSiguiente();
-        };
-
-        window.enviarWhatsAppFaltante = function(rowIdx) {
-            var r = window._faltRowsRef && window._faltRowsRef[rowIdx];
-            if (!r) { alert('Fila no encontrada'); return; }
-            var cel = _getCelularContratista(r.nombre);
-            if (!cel) {
-                alert('No se encontró celular para ' + r.nombre + '.\nVerifica que esté registrado en la lista de personal.');
-                return;
-            }
-            var msg = _generarMensajeFaltante(r);
-            var numero = '57' + cel.replace(/[^0-9]/g, '');
-            var url = 'https://wa.me/' + numero + '?text=' + encodeURIComponent(msg);
-            window.open(url, '_blank');
-        };
-
-        window.enviarWhatsAppTodos = function() {
-            var rows = window._faltRowsRef;
-            if (!rows || rows.length === 0) {
-                alert('No hay faltantes. Aplica los filtros primero.');
-                return;
-            }
-            // Agrupar por contratista — un mensaje por persona
-            var porContratista = {};
-            rows.forEach(function(r) {
-                if (!porContratista[r.nombre]) porContratista[r.nombre] = [];
-                porContratista[r.nombre].push(r);
-            });
-            var contratistas = Object.keys(porContratista).sort();
-            var sinCel = [];
-            var idx = 0;
-
-            function abrirSiguiente() {
-                if (idx >= contratistas.length) {
-                    if (sinCel.length > 0) {
-                        alert('Sin celular registrado:\n' + sinCel.join('\n') + '\n\nVerifica la lista de personal.');
-                    }
-                    return;
-                }
-                var nombre = contratistas[idx];
-                idx++;
-                var cel = _getCelularContratista(nombre);
-                if (!cel) { sinCel.push(nombre); abrirSiguiente(); return; }
-
-                // Construir mensaje con todos los faltantes de esa persona
-                var fechaLimite = document.getElementById('faltFechaLimite')
-                    ? document.getElementById('faltFechaLimite').value : '';
-                var fechaLimiteTxt = '';
-                if (fechaLimite) {
-                    var fl = new Date(fechaLimite + 'T00:00:00');
-                    fechaLimiteTxt = fl.toLocaleDateString('es-CO', { weekday:'long', day:'2-digit', month:'long' });
-                }
-                var rowsPersona = porContratista[nombre];
-                var _nom2 = nombre.split(' ');
-                var msg = 'Hola ' + _nom2[0] + ' ' + (_nom2[1]||'') + ', buen dia.\n';
-                msg += 'Eres el responsable de entregar las actas y el registro de las siguientes actividades. Te hace falta:\n\n';
-                msg += '*ENTREGABLES PENDIENTES - IVC ENGATIVA*\n\n';
-                rowsPersona.forEach(function(r, i) {
-                    msg += '*' + r.fechaTxt + '* — ' + r.tipoIVC + '\n';
-                    if (r.acompTxt) msg += '  _Con: ' + r.acompTxt + '_\n';
-                    r.faltantes.forEach(function(f){ msg += '  - ' + f + '\n'; });
-                    if (i < rowsPersona.length - 1) msg += '\n';
-                });
-                if (fechaLimiteTxt) msg += '\n*Fecha limite de entrega:* ' + fechaLimiteTxt + '\n';
-                msg += '\n*Por favor regulariza a la mayor brevedad posible.*\n';
-                msg += '_Inspeccion, Vigilancia y Control - Alcaldia Local de Engativa_';
-
-                var numero = '57' + cel.replace(/[^0-9]/g, '');
-                var url = 'https://wa.me/' + numero + '?text=' + encodeURIComponent(msg);
-                window.open(url, '_blank');
-
-                // Pausa de 1.5s entre ventanas para evitar que el navegador las bloquee
-                setTimeout(abrirSiguiente, 1500);
-            }
-
-            if (!confirm('Se abrirán ' + contratistas.length + ' conversaciones de WhatsApp (una por contratista).\n\nAsegúrate de tener WhatsApp Web abierto.\n\n¿Continuar?')) return;
-            abrirSiguiente();
         };
 
         // ── Filtro de contratista en sección operativos ──────────────────
@@ -16475,5 +16296,26 @@
         cargarEquiposDesdeFirebase();
     </script>
 
+
+    <!-- LIMPIEZA DE DATOS -->
+    <div id="modalLimpieza" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:19800;align-items:center;justify-content:center;padding:1rem;">
+      <div style="background:#fff;border-radius:14px;width:100%;max-width:460px;max-height:90vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.4);font-family:'Inter',sans-serif;">
+        <div style="background:#dc2626;color:#fff;padding:.9rem 1.2rem;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;">
+          <b>🧹 Limpieza de datos</b>
+          <button onclick="cerrarLimpieza()" style="background:none;border:none;color:#fff;font-size:1.3rem;cursor:pointer;">✕</button>
+        </div>
+        <div style="padding:1.2rem;font-size:.92rem;color:#1e293b;">
+          <p style="margin-bottom:.8rem;">Elimina los <b>operativos</b> cuya fecha esté dentro del rango. No se puede deshacer; antes de borrar se descarga un respaldo automático.</p>
+          <label style="font-weight:600;">Desde <span style="font-weight:400;color:#64748b;">(vacío = desde el inicio)</span></label>
+          <input type="date" id="limpiezaDesde" onchange="limpiezaCalcular()" style="width:100%;padding:.6rem;margin:.3rem 0 .7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
+          <label style="font-weight:600;">Hasta</label>
+          <input type="date" id="limpiezaHasta" onchange="limpiezaCalcular()" style="width:100%;padding:.6rem;margin:.3rem 0 .7rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
+          <div id="limpiezaResultado" style="margin:.5rem 0 .9rem;line-height:1.5;min-height:1.5rem;"></div>
+          <label style="font-weight:600;">Contraseña</label>
+          <input type="password" id="limpiezaClave" autocomplete="off" onkeydown="if(event.key==='Enter')limpiezaBorrar()" style="width:100%;padding:.6rem;margin:.3rem 0 .9rem;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem;">
+          <button id="btnLimpiezaBorrar" onclick="limpiezaBorrar()" style="width:100%;padding:.75rem;background:#dc2626;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:1rem;cursor:pointer;">ELIMINAR</button>
+        </div>
+      </div>
+    </div>
 </body>
 </html>
