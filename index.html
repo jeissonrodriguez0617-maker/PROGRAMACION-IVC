@@ -2595,6 +2595,7 @@
                     <button onclick="abrirModalContratosIVC()" class="_sb-item">📋 Contratos y Finalización</button>
                     <button onclick="var s=document.getElementById('seccionReporteAsistencia'); s.style.display='block'; s.scrollIntoView({behavior:'smooth',block:'start'}); window._sbActivo(this);" class="_sb-item">✅ Control de Asistencias</button>
                     <button onclick="window.abrirReporteDiasNoDisp()" class="_sb-item">📅 Disponibilidad Semanal</button>
+                    <button onclick="window.abrirQuienEstaHoy()" class="_sb-item">👥 Quién está hoy (operativos / permisos)</button>
                 </div>
             </div>
 
@@ -3090,6 +3091,7 @@
                         <button class="view-tab active" onclick="switchView('table')" style="margin:0;">📋 Lista</button>
                         <button class="view-tab" onclick="switchView('week')" style="margin:0;">📅 Semana</button>
                         <button class="view-tab" onclick="switchView('day')" style="margin:0;">📆 Día</button>
+                    <button class="view-tab" onclick="window.abrirQuienEstaHoy()" style="margin:0;">👥 Quién está hoy</button>
                     </div>
                 </div>
 
@@ -14421,6 +14423,224 @@
         };
 
                 // ── Verificación de carga exitosa ──────────────────────────────
+        // ══ QUIÉN ESTÁ HOY: operativos vs permisos / no disponibles (con filtros) ══
+        window._qhSel = {};
+        window._qhHoy = function() {
+            var d = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+            return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        };
+        window.abrirQuienEstaHoy = function() {
+            var m = document.getElementById('modalQuienHoy'); if (!m) return;
+            var f = document.getElementById('qhFecha');
+            if (!f.value) f.value = window._qhHoy();
+            m.style.display = 'flex';
+            window.renderQuienEstaHoy();
+        };
+        window.cerrarQuienEstaHoy = function() {
+            var m = document.getElementById('modalQuienHoy'); if (m) m.style.display = 'none';
+        };
+        window._qhPersonas = [];
+        window._qhToggle = function(san, on) {
+            if (on) window._qhSel[san] = true; else delete window._qhSel[san];
+            window.renderQuienEstaHoy();
+        };
+        window._qhLimpiar = function() { window._qhSel = {}; window.renderQuienEstaHoy(); };
+        window._qhSelVisibles = function() {
+            var q = sanitize(document.getElementById('qhBuscar').value || '');
+            window._qhPersonas.forEach(function(p) { if (!q || p.san.indexOf(q) >= 0) window._qhSel[p.san] = true; });
+            window.renderQuienEstaHoy();
+        };
+        window._qhFiltrarLista = function() {
+            var q = sanitize(document.getElementById('qhBuscar').value || '');
+            var items = document.querySelectorAll('#qhListaPersonas label');
+            for (var i = 0; i < items.length; i++) {
+                items[i].style.display = (!q || items[i].getAttribute('data-san').indexOf(q) >= 0) ? 'block' : 'none';
+            }
+        };
+        window._qhArmarLista = function(todos) {
+            window._qhPersonas = Object.keys(todos).map(function(san) { return { san: san, nombre: todos[san].nombre }; })
+                .sort(function(a,b){ return a.nombre.localeCompare(b.nombre); });
+            var cont = document.getElementById('qhListaPersonas');
+            cont.innerHTML = window._qhPersonas.map(function(p) {
+                return '<label data-san="' + _cEsc(p.san) + '" style="display:block;padding:2px 0;cursor:pointer;"><input type="checkbox" ' +
+                    (window._qhSel[p.san] ? 'checked ' : '') + 'onchange="window._qhToggleSan(this)" data-s="' + _cEsc(p.san) + '"> ' + _cEsc(p.nombre) + '</label>';
+            }).join('');
+            window._qhFiltrarLista();
+            var n = Object.keys(window._qhSel).length;
+            document.getElementById('qhPersonasResumen').textContent = '👤 Personas: ' + (n ? n + ' seleccionada(s)' : 'todas') + ' ▾';
+        };
+        window._qhToggleSan = function(el) { window._qhToggle(el.getAttribute('data-s'), el.checked); };
+        window.descargarQuienEstaHoy = function() {
+            var d = window._qhUltimo; if (!d) return;
+            var hD = document.getElementById('qhDesde').value, hH = document.getElementById('qhHasta').value;
+            var W = 1100, pad = 24, sc = 2, y = 0;
+            var lineas = []; // {tipo, texto, color, bg}
+            var cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+            function wrap(txt, font, maxW) {
+                ctx.font = font; var out = [], linea = '';
+                String(txt).split(' ').forEach(function(w) {
+                    var t = linea ? linea + ' ' + w : w;
+                    if (ctx.measureText(t).width > maxW && linea) { out.push(linea); linea = w; } else linea = t;
+                });
+                if (linea) out.push(linea); return out;
+            }
+            var F = 'Arial, Helvetica, sans-serif';
+            var cab = [{ f: 'bold 22px ' + F, t: 'IVC ENGATIVA - Quien esta hoy', c: '#fff' },
+                       { f: '15px ' + F, t: formatDateLong(d.fecha) + ((hD || hH) ? '  |  Horario ' + (hD || '00:00') + ' a ' + (hH || '23:59') : ''), c: '#e2e8f0' }];
+            if (d.filtros) wrap(d.filtros, '13px ' + F, W - 2*pad).forEach(function(l) { cab.push({ f: '13px ' + F, t: l, c: '#cbd5e1' }); });
+            var bloques = [];
+            d.secciones.forEach(function(sec) {
+                bloques.push({ k: 'sec', t: sec.t + ' (' + sec.items.length + ')', c: sec.c, bg: sec.bg });
+                if (!sec.items.length) bloques.push({ k: 'txt', f: 'italic 14px ' + F, t: 'Nadie', c: '#94a3b8', h: 24 });
+                sec.items.forEach(function(it) {
+                    bloques.push({ k: 'txt', f: 'bold 15px ' + F, t: it.n, c: '#0f172a', h: 22 });
+                    if (it.s) wrap(it.s, '13px ' + F, W - 2*pad - 16).forEach(function(l) { bloques.push({ k: 'txt', f: '13px ' + F, t: l, c: '#475569', h: 18 }); });
+                });
+                bloques.push({ k: 'gap', h: 12 });
+            });
+            var hCab = 28 + cab.length * 24 + 8;
+            var H = hCab + 16;
+            bloques.forEach(function(b) { H += b.k === 'sec' ? 36 : b.h; });
+            H += 30;
+            cv.width = W * sc; cv.height = H * sc; ctx.scale(sc, sc);
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+            ctx.fillStyle = '#1e3a8a'; ctx.fillRect(0, 0, W, hCab);
+            y = 34;
+            cab.forEach(function(l, i) { ctx.font = l.f; ctx.fillStyle = l.c; ctx.fillText(l.t, pad, y); y += (i === 0 ? 26 : 22); });
+            y = hCab + 16;
+            bloques.forEach(function(b) {
+                if (b.k === 'sec') {
+                    ctx.fillStyle = b.bg; ctx.fillRect(pad, y, W - 2*pad, 30);
+                    ctx.fillStyle = b.c; ctx.font = 'bold 15px ' + F; ctx.fillText(b.t, pad + 10, y + 20); y += 36;
+                } else if (b.k === 'txt') {
+                    ctx.font = b.f; ctx.fillStyle = b.c; ctx.fillText(b.t, pad + 8, y + b.h - 6); y += b.h;
+                } else y += b.h;
+            });
+            ctx.font = '11px ' + F; ctx.fillStyle = '#94a3b8';
+            ctx.fillText('Generado ' + new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' }), pad, H - 10);
+            var a = document.createElement('a');
+            a.download = 'quien-esta-hoy_' + d.fecha + (hD ? '_' + hD.replace(':','') + '-' + (hH || '').replace(':','') : '') + '.png';
+            a.href = cv.toDataURL('image/png');
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        };
+        window.renderQuienEstaHoy = function() {
+            var fecha = document.getElementById('qhFecha').value;
+            var body = document.getElementById('qhBody');
+            if (!fecha) { body.innerHTML = ''; return; }
+            var hDesde = document.getElementById('qhDesde').value || '';
+            var hHasta = document.getElementById('qhHasta').value || '';
+            var verOp = document.getElementById('qhVerOp').checked;
+            var verOtras = document.getElementById('qhVerOtras').checked;
+            var verPerm = document.getElementById('qhVerPerm').checked;
+            var verLib = document.getElementById('qhVerLibres').checked;
+            var sel = window._qhSel, haySel = Object.keys(sel).length > 0;
+            function solapa(op) {
+                if (!hDesde && !hHasta) return true;
+                function nh(h) { var m = String(h || '').match(/^(\d{1,2}):(\d{2})/); return m ? m[1].padStart(2,'0') + ':' + m[2] : ''; }
+                var ini = nh(op.horaInicio), fin = nh(op.horaFin) || ini;
+                if (!ini) return true;
+                if (hHasta && ini > hHasta) return false;
+                if (hDesde && fin < hDesde) return false;
+                return true;
+            }
+            var enOp = {}, enOtras = {}, permisos = {};
+            var delDia = operativos.filter(function(op) {
+                return op.fecha === fecha && !(op.estado && String(op.estado).toUpperCase() === 'CANCELADO');
+            });
+            var todos = {};
+            ['profesional','gestor','tecnico'].forEach(function(cat) {
+                (personalData[cat] || []).forEach(function(p) {
+                    var san = sanitize(p.nombre);
+                    if (san && !todos[san]) todos[san] = { nombre: p.nombre, rol: cat.charAt(0).toUpperCase() + cat.slice(1) };
+                });
+            });
+            delDia.forEach(function(op) {
+                var hora = (op.horaInicio || '') + (op.horaFin ? '-' + op.horaFin : '');
+                var etiqueta = (op.tipoIVC || 'Actividad') + (hora ? ' (' + hora + ')' : '');
+                var enHorario = solapa(op);
+                var tSan = sanitize(op.tipoIVC || '');
+                var esOpPuro = esOperativoCompleto(op.tipoIVC) || tSan.indexOf('IVC ') === 0;
+                var esOtra = !esOpPuro && (esReunionOCapacitacion(op.tipoIVC) || tSan.indexOf('SUPERVIS') >= 0 ||
+                    tSan.indexOf('REACCI') >= 0 || tSan.indexOf('DISPONIB') >= 0);
+                var destino = esOtra ? enOtras : enOp;
+                _asignadosOp(op).forEach(function(p) {
+                    if (!todos[p.san]) todos[p.san] = { nombre: p.nombre, rol: p.rol };
+                    var v = getAsistVal(op, p.nombre);
+                    if (v === 'PERMISO') {
+                        permisos[p.san] = { nombre: p.nombre, motivo: 'Permiso registrado en ' + etiqueta, asist: true };
+                        return;
+                    }
+                    if (!enHorario) return;
+                    if (!destino[p.san]) destino[p.san] = { nombre: p.nombre, rol: p.rol, acts: [] };
+                    destino[p.san].acts.push(etiqueta);
+                });
+            });
+            Object.keys(todos).forEach(function(san) {
+                if (permisos[san]) return;
+                var r = verificarRestriccion(todos[san].nombre, fecha, hDesde || '');
+                if (!r.bloqueado && hHasta) r = verificarRestriccion(todos[san].nombre, fecha, hHasta);
+                if (!r.bloqueado) return;
+                // Si está asignado a una actividad en ese horario, se muestra ahí con alerta (no se oculta)
+                var asignado = enOp[san] || enOtras[san];
+                var extra = '';
+                if (enOp[san]) { enOp[san].alerta = r.motivo; extra += ' · ⚠️ asignado a operativo: ' + enOp[san].acts.join(' | '); }
+                if (enOtras[san]) { enOtras[san].alerta = r.motivo; extra += ' · asignado a: ' + enOtras[san].acts.join(' | '); }
+                permisos[san] = { nombre: todos[san].nombre, motivo: r.motivo + extra };
+            });
+            Object.keys(permisos).forEach(function(san) { if (permisos[san].asist) { delete enOp[san]; delete enOtras[san]; } });
+            window._qhArmarLista(todos);
+            function ok(san) { return !haySel || sel[san]; }
+            var enOpArr = Object.keys(enOp).filter(ok).map(function(k) { return enOp[k]; });
+            var otrasArr = Object.keys(enOtras).filter(ok).map(function(k) { return enOtras[k]; });
+            var permArr = Object.keys(permisos).filter(ok).map(function(k) { return permisos[k]; });
+            var libres = Object.keys(todos).filter(function(san) { return ok(san) && !enOp[san] && !enOtras[san] && !permisos[san]; })
+                .map(function(san) { return todos[san]; });
+            var cmp = function(a,b){ return a.nombre.localeCompare(b.nombre); };
+            enOpArr.sort(cmp); otrasArr.sort(cmp); permArr.sort(cmp); libres.sort(cmp);
+            function sec(titulo, color, bg, items, fn) {
+                return '<div style="margin-bottom:14px;"><div style="font-weight:700;color:' + color + ';background:' + bg + ';padding:7px 12px;border-radius:8px;margin-bottom:6px;">' + titulo + ' (' + items.length + ')</div>' +
+                    (items.length ? items.map(fn).join('') : '<div style="color:#94a3b8;padding:4px 12px;font-size:.85rem;">Nadie</div>') + '</div>';
+            }
+            var row = function(n, sub) {
+                return '<div style="padding:5px 12px;border-bottom:1px solid #f1f5f9;font-size:.88rem;"><b>' + _cEsc(n) + '</b>' + (sub ? '<div style="color:#64748b;font-size:.78rem;">' + _cEsc(sub) + '</div>' : '') + '</div>';
+            };
+            var detalle = delDia.filter(solapa).map(function(op) {
+                var asig = _asignadosOp(op);
+                var cancel = '';
+                var quienes = asig.length ? asig.map(function(p) {
+                    var san = p.san;
+                    var marca = permisos[san] ? ' 🚫' : '';
+                    return _cEsc(p.nombre) + marca;
+                }).join(', ') : '<span style="color:#dc2626;">⚠️ sin personal asignado</span>';
+                var otra = !(esOperativoCompleto(op.tipoIVC) || sanitize(op.tipoIVC || '').indexOf('IVC ') === 0) &&
+                    (esReunionOCapacitacion(op.tipoIVC) || /SUPERVIS|REACCI|DISPONIB/.test(sanitize(op.tipoIVC || '')));
+                return '<div style="padding:5px 12px;border-bottom:1px solid #f1f5f9;font-size:.82rem;"><b>' + _cEsc(op.tipoIVC || 'Actividad') + '</b> · ' +
+                    _cEsc((op.horaInicio || '?') + (op.horaFin ? '-' + op.horaFin : '')) + ' · ' + (otra ? 'otra actividad' : 'operativo') +
+                    '<div style="color:#475569;">' + quienes + '</div></div>';
+            }).join('');
+            var _fil = [];
+            if (haySel) _fil.push('Personas: ' + Object.keys(sel).map(function(k){ return todos[k] ? todos[k].nombre : k; }).join(', '));
+            var _fx = function(a, f) { return a.map(f); };
+            var _acts = function(p) { return p.acts.join(' | ') + (p.alerta ? '  [!] ' + p.alerta : ''); };
+            window._qhUltimo = {
+                fecha: fecha, filtros: _fil.join(' · '),
+                secciones: [
+                    verOp ? { t: 'EN OPERATIVOS', c: '#1e40af', bg: '#dbeafe', items: _fx(enOpArr, function(p){ return { n: p.nombre + ' · ' + p.rol, s: _acts(p) }; }) } : null,
+                    verOtras ? { t: 'SUPERVISION / REUNIONES / MESAS / CAPACITACIONES / REACCION', c: '#6d28d9', bg: '#ede9fe', items: _fx(otrasArr, function(p){ return { n: p.nombre + ' · ' + p.rol, s: _acts(p) }; }) } : null,
+                    verPerm ? { t: 'CON PERMISO / NO DISPONIBLES', c: '#b45309', bg: '#fef3c7', items: _fx(permArr, function(p){ return { n: p.nombre, s: p.motivo }; }) } : null,
+                    verLib ? { t: 'DISPONIBLES SIN ACTIVIDAD', c: '#166534', bg: '#dcfce7', items: _fx(libres, function(p){ return { n: p.nombre + ' · ' + p.rol, s: '' }; }) } : null
+                ].filter(Boolean)
+            };
+            var horario = (hDesde || hHasta) ? ' · horario ' + (hDesde || '00:00') + ' a ' + (hHasta || '23:59') : '';
+            body.innerHTML =
+                '<div style="margin-bottom:10px;color:#475569;font-size:.85rem;">' + _cEsc(formatDateLong(fecha)) + ' · ' + delDia.length + ' actividad(es)' + _cEsc(horario) + '</div>' +
+                (verOp ? sec('🛰️ En operativos', '#1e40af', '#dbeafe', enOpArr, function(p) { return row(p.nombre + ' · ' + p.rol, p.acts.join(' | ') + (p.alerta ? '  ⚠️ ' + p.alerta : '')); }) : '') +
+                (verOtras ? sec('🗂️ Supervisión / reuniones / mesas / capacitaciones / equipo de reacción', '#6d28d9', '#ede9fe', otrasArr, function(p) { return row(p.nombre + ' · ' + p.rol, p.acts.join(' | ') + (p.alerta ? '  ⚠️ ' + p.alerta : '')); }) : '') +
+                (verPerm ? sec('🚫 Con permiso / no disponibles', '#b45309', '#fef3c7', permArr, function(p) { return row(p.nombre, p.motivo); }) : '') +
+                '<details style="margin-top:6px;"><summary style="cursor:pointer;color:#475569;font-size:.85rem;">📋 Ver todas las actividades del día' + ((hDesde || hHasta) ? ' en ese horario' : '') + '</summary>' + (detalle || '<div style="padding:6px 12px;color:#94a3b8;">Ninguna</div>') + '</details>' +
+                (verLib ? sec('✅ Disponibles sin actividad', '#166534', '#dcfce7', libres, function(p) { return row(p.nombre + ' · ' + p.rol, ''); }) : '');
+        };
+
         // ── Callbacks del modal de restricción ────────────────────────
         window._restriccionPendiente = null;
 
@@ -15173,6 +15393,41 @@
         </div>
     </div>
 
+
+    <!-- ══ MODAL QUIÉN ESTÁ HOY ══ -->
+    <div id="modalQuienHoy" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:100000;align-items:center;justify-content:center;padding:12px;" onclick="if(event.target===this)window.cerrarQuienEstaHoy()">
+        <div style="background:#fff;border-radius:14px;width:100%;max-width:760px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35);">
+            <div style="padding:14px 18px;background:#1e3a8a;color:#fff;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <b style="font-size:1.05rem;flex:1;">👥 Quién está hoy</b>
+                <input type="date" id="qhFecha" onchange="window.renderQuienEstaHoy()" style="padding:6px 8px;border-radius:8px;border:none;">
+                <button onclick="document.getElementById('qhFecha').value=window._qhHoy();window.renderQuienEstaHoy()" style="padding:6px 10px;border-radius:8px;border:none;cursor:pointer;">Hoy</button>
+                <button onclick="window.descargarQuienEstaHoy()" style="padding:6px 10px;border-radius:8px;border:none;cursor:pointer;background:#22c55e;color:#fff;font-weight:700;">📷 Imagen</button>
+                <button onclick="window.cerrarQuienEstaHoy()" style="padding:6px 10px;border-radius:8px;border:none;cursor:pointer;background:#ef4444;color:#fff;">✕</button>
+            </div>
+            <div style="padding:10px 18px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;font-size:.82rem;">
+                <label style="display:flex;flex-direction:column;gap:2px;">Hora desde<input type="time" id="qhDesde" onchange="window.renderQuienEstaHoy()" style="padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;"></label>
+                <label style="display:flex;flex-direction:column;gap:2px;">Hora hasta<input type="time" id="qhHasta" onchange="window.renderQuienEstaHoy()" style="padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;"></label>
+                <details id="qhPersonasBox" style="position:relative;">
+                    <summary id="qhPersonasResumen" style="cursor:pointer;padding:6px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;list-style:none;">👤 Personas: todas ▾</summary>
+                    <div style="position:absolute;z-index:5;top:34px;left:0;width:300px;max-width:80vw;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);padding:8px;">
+                        <input type="text" id="qhBuscar" oninput="window._qhFiltrarLista()" placeholder="Buscar nombre..." style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;margin-bottom:6px;">
+                        <div style="display:flex;gap:6px;margin-bottom:6px;">
+                            <button type="button" onclick="window._qhSelVisibles(true)" style="flex:1;padding:3px;cursor:pointer;">Marcar visibles</button>
+                            <button type="button" onclick="window._qhLimpiar()" style="flex:1;padding:3px;cursor:pointer;">Limpiar</button>
+                        </div>
+                        <div id="qhListaPersonas" style="max-height:240px;overflow:auto;"></div>
+                    </div>
+                </details>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;padding-bottom:6px;">
+                    <label><input type="checkbox" id="qhVerOp" checked onchange="window.renderQuienEstaHoy()"> En operativos</label>
+                    <label><input type="checkbox" id="qhVerOtras" checked onchange="window.renderQuienEstaHoy()"> Supervisión / reuniones / capacitaciones / reacción</label>
+                    <label><input type="checkbox" id="qhVerPerm" checked onchange="window.renderQuienEstaHoy()"> No disponibles</label>
+                    <label><input type="checkbox" id="qhVerLibres" checked onchange="window.renderQuienEstaHoy()"> Disponibles</label>
+                </div>
+            </div>
+            <div id="qhBody" style="padding:14px 18px;overflow:auto;"></div>
+        </div>
+    </div>
 
     <!-- ══ MODAL RESTRICCIONES DE CONTRATISTAS ══ -->
     <!-- ══ MODAL: GESTIÓN DE CONTRATISTAS ══ -->
