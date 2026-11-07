@@ -2927,6 +2927,7 @@
 
                     <div class="form-section">
                         <div class="form-section-title">👥 Personal Asignado</div>
+                        <button type="button" id="btnAutoPersonal" onclick="autoAsignarPersonal()" style="margin-bottom:10px;padding:8px 14px;border:1.5px solid #3b82f6;background:#eff6ff;color:#1e40af;border-radius:8px;font-weight:700;font-size:0.8rem;cursor:pointer;">⚡ Asignar personal automático (rotación)</button>
                         
                         <!-- PROFESIONALES -->
                         <div class="form-group">
@@ -3097,6 +3098,11 @@
 
                 <!-- Vista de Tabla -->
                 <div class="view-content active" id="tableView">
+                    <div id="barraSugerencias" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:8px 12px;background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:8px;font-size:0.8rem;color:#1e40af;">
+                        <span id="barraSugerenciasTxt"></span>
+                        <button type="button" onclick="aceptarSugerencias()" style="padding:6px 12px;border:none;background:#2563eb;color:white;border-radius:6px;font-weight:700;font-size:0.78rem;cursor:pointer;">✔ Aceptar todas las sugerencias visibles</button>
+                        <span style="color:#334155;">Azul = sugerido (sin guardar) · Negro = ya asignado</span>
+                    </div>
                     <!-- Flechas de navegación horizontal -->
                     <div style="position:relative;">
                         <button onclick="document.getElementById('tablaScroll').scrollBy({left:-300,behavior:'smooth'})"
@@ -4188,8 +4194,8 @@
                 bgHeader: '#dcfce7',
                 borderColor: '#22c55e',
                 referente: 'ANGIEE ÁVILA',
-                miembros: ['MIGUEL PEREZ','ADRIANA FORERO','MARIA ÁLVAREZ','FUAD CHADID',
-                           'ANLLY ROJAS','ANDRÉS ARIAS','JHON MONCADA','JUAN CAMPO']
+                miembros: ['MIGUEL PEREZ','MARIA ÁLVAREZ','FUAD CHADID',
+                           'ANDRÉS ARIAS','JHON MONCADA','JUAN CAMPO']
             },
             {
                 id: 'movilidad',
@@ -4810,6 +4816,7 @@
             renderizarOpciones('profesional');
             renderizarOpciones('gestor');
             renderizarOpciones('tecnico');
+            _autoPersonalSiAplica();
         });
         
         // También verificar cuando cambia el campo "Otro"
@@ -4951,14 +4958,20 @@
         // SELECTOR PERSONALIZADO DE PERSONAL - DESPLEGABLE SIMPLE
         // ══════════════════════════════════════════════════════════
         
+        var HORARIOS_ESTUDIO = {
+            'CAMILA FIGUEROA': {
+                1: ['18:00', '21:59'], 2: ['18:00', '21:59'], 3: ['18:00', '21:59'],
+                4: ['18:00', '21:59'], 5: ['18:00', '21:59'], 6: ['06:00', '13:59']
+            }
+        };
+        var HORAS_TRASLADO_ESTUDIO = 1;
+
         // Datos de personal
         const personalData = {
             profesional: [
                 { nombre: 'MAURICIO GÓMEZ', celular: '3183456671' },
                 { nombre: 'HENRY FORIGUA', celular: '3008248849' },
                 { nombre: 'JHON LADINO', celular: '3138933502' },
-                { nombre: 'ADRIANA FORERO', celular: '3166170141' },
-                { nombre: 'ANLLY ROJAS', celular: '3042440129' },
                 { nombre: 'JOSE GONZALEZ', celular: '3023390803' },
                 { nombre: 'ANDRÉS ARIAS', celular: '3105719200' },
                 { nombre: 'MILTON RINCÓN', celular: '3017258748' },
@@ -5126,6 +5139,48 @@
             }
         }
 
+        // Contratistas que ya no están: se retiran de la lista maestra en Firebase (mismo efecto que Eliminar
+        // en Gestión de Contratistas). Los operativos ya registrados conservan su nombre (histórico).
+        var BAJAS_CONTRATISTAS = ['ADRIANA FORERO', 'ANLLY ROJAS'];
+        var _contrBajasEnCurso = false;
+        async function _contrAplicarBajas() {
+            if (_contrBajasEnCurso) return;
+            var bajas = BAJAS_CONTRATISTAS.map(sanitize);
+            var presentes = [];
+            ['profesional','gestor','tecnico'].forEach(function(cat) {
+                personalData[cat].forEach(function(p) { if (bajas.indexOf(sanitize(p.nombre)) >= 0) presentes.push(p); });
+            });
+            EQUIPOS_IVC.forEach(function(eq) {
+                (eq.miembros || []).forEach(function(m) { if (bajas.indexOf(sanitize(m)) >= 0 && !presentes.some(function(x){ return sanitize(x.nombre) === sanitize(m); })) presentes.push({ nombre: m, celular: '' }); });
+                if (eq.referente && bajas.indexOf(sanitize(eq.referente)) >= 0) presentes.push({ nombre: eq.referente, celular: '' });
+            });
+            if (!presentes.length) return;
+            _contrBajasEnCurso = true;
+            try {
+                ['profesional','gestor','tecnico'].forEach(function(cat) {
+                    for (var k = personalData[cat].length - 1; k >= 0; k--) {
+                        if (bajas.indexOf(sanitize(personalData[cat][k].nombre)) >= 0) personalData[cat].splice(k, 1);
+                    }
+                });
+                EQUIPOS_IVC.forEach(function(eq) {
+                    eq.miembros = (eq.miembros || []).filter(function(m) { return bajas.indexOf(sanitize(m)) < 0; });
+                    if (eq.referente && bajas.indexOf(sanitize(eq.referente)) >= 0) eq.referente = null;
+                });
+                var rem = (window.__ivcRemovidos || []).slice();
+                presentes.forEach(function(p) {
+                    if (!rem.some(function(r) { return sanitize(r.nombre) === sanitize(p.nombre); })) rem.push({ nombre: p.nombre, celular: p.celular || '' });
+                });
+                window.__ivcRemovidos = rem;
+                var ok = await _contrGuardar();
+                if (ok) {
+                    _contrAplicar(_contrEstadoActual());
+                    for (var i = 0; i < BAJAS_CONTRATISTAS.length; i++) await _contrLimpiarExtras(BAJAS_CONTRATISTAS[i]);
+                    _contrRefrescarUI();
+                }
+            } catch (e) { console.warn('Bajas de contratistas:', e); }
+            _contrBajasEnCurso = false;
+        }
+
         onValue(ref(database, 'contratistas_ivc'), function(snap) {
             if (!snap.exists()) {
                 if (_contrSeedHecho) return;
@@ -5145,6 +5200,7 @@
             _contrUltimoSnap = val;
             _contrAplicar(val);
             _contrRefrescarUI();
+            _contrAplicarBajas();
         }, function(err) {
             console.warn('contratistas_ivc: sin acceso, se usa la lista local', err);
         });
@@ -6321,7 +6377,7 @@
             var nombresHTML = personas.map(function(p) {
                 var enDisp = fechaOp && esDisponibleEstaSemana(p.nombre, fechaOp);
                 if (enDisp) {
-                    return '<strong style="color:#1d4ed8;" title="En equipo de disponibilidad">' + ((respSan && sanitize(p.nombre) === respSan) ? '📝 ' : '') + p.nombre +
+                    return '<strong style="color:#111827;" title="En equipo de disponibilidad">' + ((respSan && sanitize(p.nombre) === respSan) ? '📝 ' : '') + p.nombre +
                            '<span style="background:#dbeafe;color:#1e40af;font-size:0.6rem;font-weight:800;' +
                            'padding:0 4px;border-radius:3px;margin-left:3px;vertical-align:middle;">DISP</span>' +
                            '</strong>';
@@ -6418,6 +6474,332 @@
             });
         }
 
+        // ── Reunión de áreas: NO limita la programación de personal ─────────────
+        function esReunionAreas(tipo) {
+            var t = sanitize(tipo || '');
+            // Reunión de áreas y apoyo administrativo no son operativos: no limitan la programación
+            // (p. ej. un técnico en apoyo administrativo igual puede ir al equipo de reacción).
+            return (t.indexOf('REUNION') >= 0 && t.indexOf('AREAS') >= 0) || t.indexOf('APOYO ADMIN') >= 0;
+        }
+
+        // ── Auto-selección para Disponibilidad / Reacción: 3 profesionales + 2 gestores ──
+        // Sin restricción ni descanso, y que no estén en otro operativo el mismo día
+        // (las reuniones de áreas no cuentan como operativo).
+        window._autoReaccionAplicada = false;
+        // Los referentes de cada equipo no van a operativos de forma automática (solo si se agregan a mano)
+        function esReferente(nombre) {
+            var san = sanitize(nombre);
+            return EQUIPOS_IVC.some(function(e) { return e.referente && sanitize(e.referente) === san; });
+        }
+        // ── Operativos nocturnos: nadie puede ir a dos nocturnos en días seguidos ─────────────
+        // Nocturno = inicia desde las 18:00, antes de las 05:00, o termina pasada la medianoche.
+        function esNocturnoHoras(horaIni, horaFin) {
+            function mins(h) { var m = /^(\d{1,2}):(\d{2})/.exec(h || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+            var a = mins(horaIni), b = mins(horaFin);
+            if (a === null) return false;
+            if (a >= 18 * 60 || a < 5 * 60) return true;
+            if (b !== null && b <= a) return true; // cruza la medianoche
+            return false;
+        }
+        function _fechaMasDias(fecha, n) {
+            var d = new Date(fecha + 'T12:00:00'); d.setDate(d.getDate() + n);
+            return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+        }
+        function _opNocturno(op) {
+            return esNocturnoHoras(op.horaInicio || (op.horario ? String(op.horario).split(' - ')[0] : ''),
+                                   op.horaFin || (op.horario ? String(op.horario).split(' - ')[1] : ''));
+        }
+        // ¿La persona ya tiene un operativo nocturno el día anterior o siguiente a 'fecha'?
+        function tieneNocturnoVecino(san, fecha) {
+            var ant = _fechaMasDias(fecha, -1), sig = _fechaMasDias(fecha, 1);
+            return operativos.some(function(op) {
+                if ((op.estado || '').toUpperCase() === 'CANCELADO') return false;
+                if (op.fecha !== ant && op.fecha !== sig) return false;
+                if (esReunionOCapacitacion(op.tipoIVC) || !_opNocturno(op)) return false;
+                return _asignadosOp(op).some(function(a) { return a.san === san; });
+            });
+        }
+
+        // Los profesionales están designados por área: el tipo de operativo define de qué equipo salen.
+        // Devuelve Set de nombres (sanitizados) del equipo, o null si el tipo no tiene área definida.
+        function profesionalesDeArea(tipo) {
+            var t = sanitize(tipo || '');
+            var id = null;
+            if (t.indexOf('ACTIVIDAD ECON') >= 0) id = 'economica';
+            else if (t.indexOf('AMBIENTAL') >= 0 || t.indexOf('ESPACIO P') >= 0) id = 'espacio';
+            else if (t.indexOf('MOVILIDAD') >= 0) id = 'movilidad';
+            else if (t.indexOf('OBRAS') >= 0) id = 'obras';
+            if (!id) return null;
+            var eq = EQUIPOS_IVC.find(function(e) { return e.id === id; });
+            if (!eq) return null;
+            return new Set((eq.miembros || []).map(sanitize));
+        }
+        // Movilidad: máximo 2 operativos de movilidad por persona en la semana; el resto de operativos de
+        // movilidad lleva profesionales del equipo de espacio público. Milton va 1 vez a reacción por semana.
+        var MAX_MOVILIDAD_SEMANA = 2;
+        var PREF_REACCION_SEMANA = ['MILTON RINCON'];
+        // Solo salen automáticamente en el equipo de reacción (a operativos solo si se asignan a mano)
+        var SOLO_REACCION = ['JENIFER ESPINOSA'];
+        function equipoSan(id) {
+            var eq = EQUIPOS_IVC.find(function(e) { return e.id === id; });
+            return eq ? new Set((eq.miembros || []).map(sanitize)) : null;
+        }
+        function autoSeleccionarReaccion() {
+            var fecha   = document.getElementById('fecha') ? document.getElementById('fecha').value : '';
+            var horaIni = document.getElementById('horaInicio') ? document.getElementById('horaInicio').value : '';
+            if (!fecha) return;
+
+            // Equipo de la semana (si existe)
+            var formNocturno = esNocturnoHoras(horaIni, (document.getElementById('horaFin') || {}).value || '');
+            var equipoNombres = null;
+            if (equiposDisponibilidadDB && equiposDisponibilidadDB.length > 0) {
+                var eq = equiposDisponibilidadDB.find(function(e) {
+                    return e.fechaInicio && e.fechaFin && fecha >= e.fechaInicio && fecha <= e.fechaFin;
+                });
+                if (eq) {
+                    equipoNombres = new Set();
+                    [eq.profesionales, eq.gestores, eq.tecnicos].forEach(function(lista) {
+                        if (!lista) return;
+                        var arr = Array.isArray(lista) ? lista : Object.values(lista);
+                        arr.forEach(function(x) {
+                            var n = typeof x === 'string' ? x.split(' - ')[0].trim() : (x && x.nombre ? x.nombre : '');
+                            if (n) equipoNombres.add(sanitize(n));
+                        });
+                    });
+                }
+            }
+
+            // Semana (lunes a viernes) para balancear carga
+            var d = new Date(fecha + 'T12:00:00');
+            var dow = d.getDay();
+            var lunes = new Date(d); lunes.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+            var viernes = new Date(lunes); viernes.setDate(lunes.getDate() + 4);
+            function iso(x){ return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+            var semIni = iso(lunes), semFin = iso(viernes);
+
+            // Operativos vigentes (sin cancelados ni reuniones de áreas)
+            var opsValidos = operativos.filter(function(op) {
+                if ((op.estado || '').toUpperCase() === 'CANCELADO') return false;
+                if (esReunionAreas(op.tipoIVC)) return false;
+                return true;
+            });
+            var ocupadosHoy = new Set();
+            var cargaSemana = {};
+            var enReaccionSemana = new Set(); // quien ya estuvo en reacción esta semana no se repite
+            opsValidos.forEach(function(op) {
+                var enDia = op.fecha === fecha;
+                var enSem = op.fecha >= semIni && op.fecha <= semFin;
+                if (!enDia && !enSem) return;
+                var esReacOp = _esReaccionTipo(op.tipoIVC);
+                _asignadosOp(op).forEach(function(a) {
+                    if (enDia) ocupadosHoy.add(a.san);
+                    if (enSem) cargaSemana[a.san] = (cargaSemana[a.san] || 0) + 1;
+                    if (enSem && esReacOp) enReaccionSemana.add(a.san);
+                });
+            });
+
+            var fueraEquipo = false;
+            function elegir(categoria, cantidad) {
+                // categoria puede ser una lista: p. ej. ['gestor','tecnico'] (técnicos también pueden ir en reacción)
+                var lista = [].concat(categoria).reduce(function(acc, c) { return acc.concat(personalData[c] || []); }, []);
+                var cand = lista.filter(function(p) {
+                    var san = sanitize(p.nombre);
+                    if (equipoNombres && !equipoNombres.has(san) && !fueraEquipo) return false;
+                    if (esReferente(p.nombre)) return false;
+                    if (ocupadosHoy.has(san) || enReaccionSemana.has(san)) return false;
+                    if (formNocturno && tieneNocturnoVecino(san, fecha)) return false;
+                    var b = verificarRestriccion(p.nombre, fecha, horaIni, (document.getElementById('horaFin') ? document.getElementById('horaFin').value : ''));
+                    if (b.bloqueado) return false;
+                    var ds = estaEnDescanso(p.nombre, fecha);
+                    if (ds && ds.enDescanso) return false;
+                    return true;
+                });
+                cand.sort(function(a, b) {
+                    var sa = sanitize(a.nombre), sb = sanitize(b.nombre);
+                    var fa = equipoNombres && !equipoNombres.has(sa) ? 1 : 0, fb = equipoNombres && !equipoNombres.has(sb) ? 1 : 0;
+                    var ca = cargaSemana[sa] || 0, cb = cargaSemana[sb] || 0;
+                    return fa - fb || ca - cb || a.nombre.localeCompare(b.nombre);
+                });
+                return cand.slice(0, cantidad);
+            }
+
+            // El equipo de reacción siempre debe ser de 5 (3 profesionales + 2 gestores):
+            // primero se usa el equipo de la semana y, si no alcanza, se completa con otros disponibles.
+            var profs = elegir('profesional', 3);
+            var gests = elegir(['gestor', 'tecnico'], 2);
+            if (equipoNombres && (profs.length < 3 || gests.length < 2)) {
+                fueraEquipo = true;
+                profs = elegir('profesional', 3);
+                gests = elegir(['gestor', 'tecnico'], 2);
+            }
+            // separar técnicos de gestores
+            var _nomTec = {};
+            (personalData.tecnico || []).forEach(function(t) { _nomTec[sanitize(t.nombre)] = true; });
+            var tecs = gests.filter(function(g) { return _nomTec[sanitize(g.nombre)]; });
+            gests = gests.filter(function(g) { return !_nomTec[sanitize(g.nombre)]; });
+            personalSeleccionado.profesional = profs;
+            personalSeleccionado.gestor = gests;
+            personalSeleccionado.tecnico = tecs;
+            window._autoReaccionAplicada = true;
+
+            ['profesional', 'gestor', 'tecnico'].forEach(function(cat) {
+                var cont = document.getElementById(cat + 'Options');
+                if (cont) {
+                    cont.querySelectorAll('.personal-option:not(.todos-option)').forEach(function(opt) {
+                        var p = personalData[cat][parseInt(opt.dataset.index)];
+                        var sel = p && personalSeleccionado[cat].some(function(x){ return x.nombre === p.nombre; });
+                        opt.classList.toggle('selected', !!sel);
+                    });
+                    actualizarEstadoTodos(cat);
+                }
+                renderizarTags(cat);
+            });
+
+            if (profs.length < 3 || gests.length + tecs.length < 2) {
+                var msg = '⚠️ Reacción: solo hay ' + profs.length + ' profesional(es) y ' + (gests.length + tecs.length) +
+                          ' gestor(es)/técnico(s) disponibles sin restricción ni operativo (se requieren 3 y 2).';
+                var aviso = document.getElementById('avisoAutoReaccion');
+                if (aviso) aviso.remove();
+                aviso = document.createElement('div');
+                aviso.id = 'avisoAutoReaccion';
+                aviso.style.cssText = 'background:#fffbeb;border:1.5px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#92400e;margin-top:6px;';
+                aviso.textContent = msg;
+                var refCont = document.getElementById('profesionalTags');
+                if (refCont && refCont.parentNode) refCont.parentNode.appendChild(aviso);
+                setTimeout(function(){ var a = document.getElementById('avisoAutoReaccion'); if (a) a.remove(); }, 8000);
+            }
+        }
+
+        // ── Auto-asignación para operativos: rotación equitativa ─────────────────
+        // · Siempre 1 profesional + 1 gestor
+        // · ESPACIO PÚBLICO: 1 profesional + 1 gestor, o en su lugar 1 técnico (solo EFREN SIERRA o JHON MONCADA)
+        // · AMBIENTAL: solo 1 profesional
+        // · La reacción cuenta como operativo; la reunión de áreas no limita.
+        var TECNICOS_ESPACIO_PUBLICO = ['EFREN SIERRA', 'JHON MONCADA'];
+        function autoSeleccionarOperativo() {
+            var fecha   = document.getElementById('fecha') ? document.getElementById('fecha').value : '';
+            var horaIni = document.getElementById('horaInicio') ? document.getElementById('horaInicio').value : '';
+            var tipoSel = document.getElementById('tipoIVC') ? document.getElementById('tipoIVC').value : '';
+            if (!fecha || !tipoSel) return;
+            var t = sanitize(tipoSel);
+            var esAmbiental = t.indexOf('AMBIENTAL') >= 0;
+            var esEspPub    = t.indexOf('ESPACIO PUBLICO') >= 0;
+            var formNocturno = esNocturnoHoras(horaIni, (document.getElementById('horaFin') || {}).value || '');
+
+            var ref = new Date(fecha + 'T12:00:00');
+            var ini = new Date(ref); ini.setDate(ini.getDate() - ROTACION_VENTANA_DIAS);
+            var fin = new Date(ref); fin.setDate(fin.getDate() + ROTACION_VENTANA_DIAS);
+            function iso(x){ return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+            var iIni = iso(ini), iFin = iso(fin);
+
+            var ocupadosHoy = new Set(), conteo = {}, ultima = {}, conteoSem = {};
+            var _sem = _semanaLV(fecha);
+            operativos.forEach(function(op) {
+                if ((op.estado || '').toUpperCase() === 'CANCELADO') return;
+                if (esReunionAreas(op.tipoIVC)) return;
+                var asign = _asignadosOp(op);
+                if (op.fecha === fecha) asign.forEach(function(a){ ocupadosHoy.add(a.san); });
+                // Conteo de equidad: operativos (incluye reacción), sin reuniones/capacitaciones
+                if (esReunionOCapacitacion(op.tipoIVC)) return;
+                if (op.fecha >= _sem[0] && op.fecha <= _sem[1]) asign.forEach(function(a) { conteoSem[a.san] = (conteoSem[a.san] || 0) + 1; });
+                if (op.fecha < iIni || op.fecha > iFin) return;
+                asign.forEach(function(a) {
+                    conteo[a.san] = (conteo[a.san] || 0) + 1;
+                    if (op.fecha <= fecha && (!ultima[a.san] || op.fecha > ultima[a.san])) ultima[a.san] = op.fecha;
+                });
+            });
+
+            function elegir(categoria, soloNombres, areaSet) {
+                var cand = personalData[categoria].filter(function(p) {
+                    var san = sanitize(p.nombre);
+                    if (areaSet && !areaSet.has(san)) return false;
+                    if (soloNombres && soloNombres.indexOf(p.nombre.toUpperCase()) < 0) return false;
+                    if (esReferente(p.nombre)) return false;
+                    if (SOLO_REACCION.indexOf(san) >= 0) return false;
+                    if (ocupadosHoy.has(san)) return false;
+                    if (formNocturno && tieneNocturnoVecino(san, fecha)) return false;
+                    if (verificarRestriccion(p.nombre, fecha, horaIni, (document.getElementById('horaFin') ? document.getElementById('horaFin').value : '')).bloqueado) return false;
+                    var ds = estaEnDescanso(p.nombre, fecha);
+                    if (ds && ds.enDescanso) return false;
+                    return true;
+                });
+                cand.sort(function(a, b) {
+                    var sa = sanitize(a.nombre), sb = sanitize(b.nombre);
+                    return ((conteoSem[sa] || 0) - (conteoSem[sb] || 0)) ||
+                           ((conteo[sa] || 0) - (conteo[sb] || 0)) ||
+                           (ultima[sa] || '').localeCompare(ultima[sb] || '') ||
+                           a.nombre.localeCompare(b.nombre);
+                });
+                return cand.length ? [cand[0]] : [];
+            }
+            function mejor(a, b) { // a,b: [persona] o []; devuelve el de menor carga
+                if (!a.length) return b === undefined ? [] : b;
+                if (!b.length) return a;
+                var sa = sanitize(a[0].nombre), sb = sanitize(b[0].nombre);
+                var d = ((conteoSem[sa] || 0) - (conteoSem[sb] || 0)) || ((conteo[sa] || 0) - (conteo[sb] || 0)) || (ultima[sa] || '').localeCompare(ultima[sb] || '');
+                return d <= 0 ? a : b;
+            }
+
+            var areaProf = profesionalesDeArea(tipoSel);
+            var prof = elegir('profesional', null, areaProf);
+            var gest = [], tecn = [];
+            if (esEspPub) {
+                // Espacio público: puede ir gestor o técnico (Efren / Jhon Moncada); gana quien tenga menos carga
+                var g = elegir('gestor'), tc = elegir('tecnico', TECNICOS_ESPACIO_PUBLICO);
+                var m = mejor(g, tc);
+                if (m.length && tc.length && m[0] === tc[0]) tecn = m; else gest = m;
+            } else if (!esAmbiental) gest = elegir('gestor');
+
+            personalSeleccionado.profesional = prof;
+            personalSeleccionado.gestor = gest;
+            personalSeleccionado.tecnico = tecn;
+            window._autoReaccionAplicada = true;
+
+            ['profesional', 'gestor', 'tecnico'].forEach(function(cat) {
+                var cont = document.getElementById(cat + 'Options');
+                if (cont) {
+                    cont.querySelectorAll('.personal-option:not(.todos-option)').forEach(function(opt) {
+                        var p = personalData[cat][parseInt(opt.dataset.index)];
+                        opt.classList.toggle('selected', !!(p && personalSeleccionado[cat].some(function(x){ return x.nombre === p.nombre; })));
+                    });
+                    actualizarEstadoTodos(cat);
+                }
+                renderizarTags(cat);
+            });
+
+            var faltan = [];
+            if (!prof.length) faltan.push('profesional');
+            if (esEspPub && !tecn.length && !gest.length) faltan.push('gestor ni técnico (Efren / Jhon Moncada)');
+            if (!esEspPub && !esAmbiental && !gest.length) faltan.push('gestor');
+            if (faltan.length) {
+                var aviso = document.getElementById('avisoAutoReaccion');
+                if (aviso) aviso.remove();
+                aviso = document.createElement('div');
+                aviso.id = 'avisoAutoReaccion';
+                aviso.style.cssText = 'background:#fffbeb;border:1.5px solid #fcd34d;border-radius:8px;padding:8px 12px;font-size:0.78rem;color:#92400e;margin-top:6px;';
+                aviso.textContent = '⚠️ Sin ' + faltan.join(' ni ') + ' disponible (restricción u otro operativo ese día).';
+                var refCont = document.getElementById('profesionalTags');
+                if (refCont && refCont.parentNode) refCont.parentNode.appendChild(aviso);
+                setTimeout(function(){ var a = document.getElementById('avisoAutoReaccion'); if (a) a.remove(); }, 8000);
+            }
+        }
+
+        // Botón / disparador general: elige la regla según el tipo de actividad
+        window.autoAsignarPersonal = function() {
+            var tipoSel = (document.getElementById('tipoIVC') || {}).value || '';
+            var t = sanitize(tipoSel);
+            if (t.indexOf('DISPONIBILIDAD') >= 0 || t.indexOf('REACCION') >= 0) { window._filtroDisponibilidadActivo = true; autoSeleccionarReaccion(); }
+            else if (esOperativoCompleto(tipoSel)) autoSeleccionarOperativo();
+        };
+        function _autoPersonalSiAplica() {
+            var vacia = !personalSeleccionado.profesional.length && !personalSeleccionado.gestor.length && !personalSeleccionado.tecnico.length;
+            if (!(window._autoReaccionAplicada || vacia)) return;
+            var tipoSel = (document.getElementById('tipoIVC') || {}).value || '';
+            var t = sanitize(tipoSel);
+            if (window._filtroDisponibilidadActivo) autoSeleccionarReaccion();
+            else if (tipoSel && t !== 'OTRO' && esOperativoCompleto(tipoSel)) autoSeleccionarOperativo();
+        }
+
         // Renderizar opciones
         function renderizarOpciones(categoria) {
             const container = document.getElementById(`${categoria}Options`);
@@ -6473,11 +6855,12 @@
 
                 operativos.forEach(function(op) {
                     if ((op.estado||'').toUpperCase() === 'CANCELADO') return;
+                    if (esReunionAreas(op.tipoIVC)) return; // la reunión de áreas no limita
                     var enRango = esReaccionFiltro
                         ? (op.fecha >= semIni && op.fecha <= semFin &&
-                           (op.tipoIVC||'').toUpperCase().includes('DISPONIBILIDAD') ||
-                           (op.tipoIVC||'').toUpperCase().includes('REACCIÓN') ||
-                           (op.tipoIVC||'').toUpperCase().includes('REACCION'))
+                           ((op.tipoIVC||'').toUpperCase().includes('DISPONIBILIDAD') ||
+                            (op.tipoIVC||'').toUpperCase().includes('REACCIÓN') ||
+                            (op.tipoIVC||'').toUpperCase().includes('REACCION')))
                         : op.fecha === fechaForm;
                     if (!enRango) return;
                     ['profesional','gestor','tecnico'].forEach(function(campo) {
@@ -6532,7 +6915,7 @@
                 // Verificar si tiene restricción activa con la fecha/hora actual del form
                 var _fecha   = document.getElementById('fecha')    ? document.getElementById('fecha').value    : '';
                 var _horaIni = document.getElementById('horaInicio')? document.getElementById('horaInicio').value : '';
-                var _bloqueo    = verificarRestriccion(person.nombre, _fecha, _horaIni);
+                var _bloqueo    = verificarRestriccion(person.nombre, _fecha, _horaIni, (document.getElementById('horaFin') ? document.getElementById('horaFin').value : ''));
                 var _descanso   = estaEnDescanso(person.nombre, _fecha);
                 // Combinar restricción manual + semana de descanso
                 if (!_bloqueo.bloqueado && _descanso.enDescanso) {
@@ -6670,7 +7053,7 @@
                 var horaIni = document.getElementById('horaInicio') ? document.getElementById('horaInicio').value : '';
                 var bloqueados = [];
                 personalSeleccionado[categoria] = data.filter(function(p) {
-                    var b = verificarRestriccion(p.nombre, fecha, horaIni);
+                    var b = verificarRestriccion(p.nombre, fecha, horaIni, (document.getElementById('horaFin') ? document.getElementById('horaFin').value : ''));
                     if (!b.bloqueado) { var _d1 = estaEnDescanso(p.nombre, fecha); if (_d1.enDescanso) b = { bloqueado: true, motivo: '😴 ' + _d1.motivo }; }
                     if (b.bloqueado) { bloqueados.push(p.nombre + ': ' + b.motivo); return false; }
                     return true;
@@ -6733,7 +7116,7 @@
                 // Seleccionar — verificar restricción primero
                 var fecha     = document.getElementById('fecha') ? document.getElementById('fecha').value : '';
                 var horaIni   = document.getElementById('horaInicio') ? document.getElementById('horaInicio').value : '';
-                var bloqueo   = verificarRestriccion(person.nombre, fecha, horaIni);
+                var bloqueo   = verificarRestriccion(person.nombre, fecha, horaIni, (document.getElementById('horaFin') ? document.getElementById('horaFin').value : ''));
                 if (!bloqueo.bloqueado) { var _d2 = estaEnDescanso(person.nombre, fecha); if (_d2.enDescanso) bloqueo = { bloqueado: true, motivo: '😴 ' + _d2.motivo }; }
 
                 if (bloqueo.bloqueado) {
@@ -6816,7 +7199,7 @@
                     var _tagFecha   = document.getElementById('fecha')     ? document.getElementById('fecha').value     : '';
                     var _tagHoraIni = document.getElementById('horaInicio') ? document.getElementById('horaInicio').value : '';
                     seleccionados.forEach(person => {
-                        var _tb = verificarRestriccion(person.nombre, _tagFecha, _tagHoraIni);
+                        var _tb = verificarRestriccion(person.nombre, _tagFecha, _tagHoraIni, (document.getElementById('horaFin') ? document.getElementById('horaFin').value : ''));
                 if (!_tb.bloqueado) { var _d3 = estaEnDescanso(person.nombre, _tagFecha); if (_d3.enDescanso) _tb = { bloqueado: true, motivo: '😴 ' + _d3.motivo }; }
                         const tag = document.createElement('div');
                         tag.className = `personal-tag ${categoria}-tag`;
@@ -7179,12 +7562,15 @@
             renderizarOpciones('profesional');
             renderizarOpciones('gestor');
             renderizarOpciones('tecnico');
+            // Reacción: recalcular selección automática si fue puesta por el sistema o está vacía
+            _autoPersonalSiAplica();
         });
         document.getElementById('filterEstado').addEventListener('change', aplicarFiltrosGlobales);
 
         function resetForm() {
             document.getElementById('operativoForm').reset();
             window._filtroDisponibilidadActivo = false; // limpiar filtro de disponibilidad
+            window._autoReaccionAplicada = false;
             
             // Limpiar ID de Gobierno
             idGovChecks.forEach(c => c.checked = false);
@@ -7459,8 +7845,283 @@
             return '';
         }
 
+        // ══════════════════════════════════════════════════════════════
+        // SUGERENCIAS AUTOMÁTICAS DE PERSONAL (se muestran en azul en la tabla)
+        //  · Solo operativos (y reacción) desde hoy, sin cancelar, a los que les falta personal
+        //  · Reacción: 3 profesionales + 2 gestores (del equipo de la semana si existe)
+        //  · Ambiental: 1 profesional · Espacio público: 1 prof. + (1 gestor o técnico Efren/Jhon)
+        //  · Demás operativos: 1 profesional + 1 gestor
+        //  · Rotación por menor cantidad de operativos (±ROTACION_VENTANA_DIAS), sin restricciones,
+        //    sin estar en otro operativo el mismo día; la reunión de áreas no limita.
+        // ══════════════════════════════════════════════════════════════
+        var _sugerenciasOp = {};
+        function _hoyISO() {
+            var d = new Date();
+            return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+        }
+        function _esReaccionTipo(tipo) {
+            var t = sanitize(tipo || '');
+            return t.indexOf('DISPONIBILIDAD') >= 0 || t.indexOf('REACCION') >= 0;
+        }
+        function _semanaLV(fecha) {
+            var d = new Date(fecha + 'T12:00:00'), dow = d.getDay();
+            var l = new Date(d); l.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+            var v = new Date(l); v.setDate(l.getDate() + 4);
+            function iso(x){ return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+            return [iso(l), iso(v)];
+        }
+        // Planificación SEMANAL: se reparten los cupos de cada semana de forma global para que
+        // todos tengan actividad (nadie en 0) y la carga quede equilibrada; luego un paso de
+        // intercambios mueve cupos de quien tiene más a quien tiene menos.
+        function calcularSugerenciasPersonal() {
+            var res = {};
+            try {
+                var hoy = _hoyISO();
+                function iso(x){ return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+                var vivos = operativos.filter(function(op) {
+                    return (op.estado || '').toUpperCase() !== 'CANCELADO' && !esReunionAreas(op.tipoIVC) && op.fecha;
+                });
+                var asigs = [];
+                vivos.forEach(function(op) {
+                    var eq = !esReunionOCapacitacion(op.tipoIVC);
+                    var rc = _esReaccionTipo(op.tipoIVC);
+                    var mv = !rc && sanitize(op.tipoIVC).indexOf('MOVILIDAD') >= 0;
+                    var nc = eq && _opNocturno(op);
+                    _asignadosOp(op).forEach(function(a) { asigs.push({ san: a.san, fecha: op.fecha, eq: eq, reac: rc, mov: mv, noc: nc, opId: op.id }); });
+                });
+                var pendientes = vivos.filter(function(op) {
+                    if (op.fecha < hoy) return false;
+                    if (esReunionOCapacitacion(op.tipoIVC)) return false;
+                    return _esReaccionTipo(op.tipoIVC) || esOperativoCompleto(op.tipoIVC);
+                });
+                var porSemana = {};
+                pendientes.forEach(function(op) { var k = _semanaLV(op.fecha)[0]; (porSemana[k] = porSemana[k] || []).push(op); });
+
+                Object.keys(porSemana).sort().forEach(function(lun) {
+                    var sem = _semanaLV(lun);
+                    var ops = porSemana[lun];
+
+                    // 1) Cupos faltantes de la semana
+                    var slots = [];
+                    ops.forEach(function(op) {
+                        var t = sanitize(op.tipoIVC);
+                        var esReac = _esReaccionTipo(op.tipoIVC);
+                        var esAmb = !esReac && t.indexOf('AMBIENTAL') >= 0;
+                        var esEP  = !esReac && t.indexOf('ESPACIO PUBLICO') >= 0;
+                        var cP = parsearPersonal(op.profesional).length;
+                        var cG = parsearPersonal(op.gestor).length;
+                        var cT = parsearPersonal(op.tecnico).length;
+                        var faltaP, faltaG;
+                        if (esReac) {
+                            // El equipo de reacción siempre suma 5 (3 profesionales + 2 gestores/técnicos)
+                            var necesita = Math.max(0, 5 - (cP + cG + cT));
+                            faltaP = Math.min(necesita, Math.max(0, 3 - cP));
+                            faltaG = necesita - faltaP; // el resto se completa con gestores/técnicos
+                        } else {
+                            faltaP = cP === 0 ? 1 : 0;
+                            faltaG = (!esAmb && !esEP && cG + cT === 0) ? 1 : 0;
+                        }
+                        var faltaEP = (esEP && cG + cT === 0) ? 1 : 0;
+                        var equipo = null;
+                        if (esReac && equiposDisponibilidadDB && equiposDisponibilidadDB.length > 0) {
+                            var eqS = equiposDisponibilidadDB.find(function(e) {
+                                return e.fechaInicio && e.fechaFin && op.fecha >= e.fechaInicio && op.fecha <= e.fechaFin;
+                            });
+                            if (eqS) {
+                                equipo = new Set();
+                                [eqS.profesionales, eqS.gestores, eqS.tecnicos].forEach(function(l) {
+                                    if (!l) return;
+                                    (Array.isArray(l) ? l : Object.values(l)).forEach(function(x) {
+                                        var n = typeof x === 'string' ? x.split(' - ')[0].trim() : (x && x.nombre ? x.nombre : '');
+                                        if (n) equipo.add(sanitize(n));
+                                    });
+                                });
+                            }
+                        }
+                        var areaProf = esReac ? null : profesionalesDeArea(op.tipoIVC);
+                        var esMov = !esReac && t.indexOf('MOVILIDAD') >= 0;
+                        var altArea = esMov ? equipoSan('espacio') : null; // desborde de movilidad → espacio público
+                        var noc = _opNocturno(op);
+                        for (var i = 0; i < faltaP; i++) slots.push({ op: op, tipo: 'P', reac: esReac, area: areaProf, equipo: equipo, mov: esMov, altArea: altArea, noc: noc });
+                        for (var j = 0; j < faltaG; j++) slots.push({ op: op, tipo: 'G', reac: esReac, area: null, equipo: equipo, noc: noc });
+                        for (var k = 0; k < faltaEP; k++) slots.push({ op: op, tipo: 'EP', reac: false, area: null, equipo: null, noc: noc });
+                    });
+                    if (!slots.length) return;
+
+                    // 2) Candidatos estáticos por cupo (referentes, área, equipo, restricciones, descanso)
+                    function listaCat(slot) {
+                        if (slot.tipo === 'P') return [['profesional', null]];
+                        if (slot.tipo === 'G') return slot.reac ? [['gestor', null], ['tecnico', null]] : [['gestor', null]];
+                        return [['gestor', null], ['tecnico', TECNICOS_ESPACIO_PUBLICO]];
+                    }
+                    var opciones = {};
+                    slots.forEach(function(slot) {
+                        slot.cands = [];
+                        listaCat(slot).forEach(function(par) {
+                            (personalData[par[0]] || []).forEach(function(p) {
+                                var san = sanitize(p.nombre);
+                                if (par[1] && par[1].indexOf(p.nombre.toUpperCase()) < 0) return;
+                                if (esReferente(p.nombre)) return;
+                                if (!slot.reac && SOLO_REACCION.indexOf(san) >= 0) return;
+                                var alt = false;
+                                if (slot.area && !slot.area.has(san)) {
+                                    if (slot.altArea && slot.altArea.has(san)) alt = true; else return;
+                                }
+                                var fuera = !!(slot.equipo && !slot.equipo.has(san)); // reacción: se completa a 5 con otros si el equipo no alcanza
+                                if (verificarRestriccion(p.nombre, slot.op.fecha, slot.op.horaInicio || '', slot.op.horaFin || '').bloqueado) return;
+                                var ds = estaEnDescanso(p.nombre, slot.op.fecha);
+                                if (ds && ds.enDescanso) return;
+                                slot.cands.push({ p: p, cat: par[0], san: san, fuera: fuera, alt: alt });
+                                if (!fuera && !alt) opciones[san] = (opciones[san] || 0) + 1;
+                            });
+                        });
+                    });
+
+                    // 3) Estado de la semana
+                    var W = {}, V = {}, U = {}, occ = {}, reacSem = {}, movSem = {}, nocDias = {};
+                    var d0 = new Date(sem[0] + 'T12:00:00'); d0.setDate(d0.getDate() - ROTACION_VENTANA_DIAS);
+                    var d1 = new Date(sem[1] + 'T12:00:00'); d1.setDate(d1.getDate() + ROTACION_VENTANA_DIAS);
+                    var v0 = iso(d0), v1 = iso(d1);
+                    asigs.forEach(function(a) {
+                        (occ[a.fecha] = occ[a.fecha] || {})[a.san] = true;
+                        if (a.reac && a.fecha >= sem[0] && a.fecha <= sem[1]) reacSem[a.san] = true;
+                        if (a.mov && a.fecha >= sem[0] && a.fecha <= sem[1]) movSem[a.san] = (movSem[a.san] || 0) + 1;
+                        if (a.noc) (nocDias[a.san] = nocDias[a.san] || {})[a.fecha] = true;
+                        if (!a.eq) return;
+                        if (a.fecha >= sem[0] && a.fecha <= sem[1]) W[a.san] = (W[a.san] || 0) + 1;
+                        if (a.fecha >= v0 && a.fecha <= v1) V[a.san] = (V[a.san] || 0) + 1;
+                        if (a.fecha < sem[0] && (!U[a.san] || a.fecha > U[a.san])) U[a.san] = a.fecha;
+                    });
+                    function libre(slot, san) {
+                        if (occ[slot.op.fecha] && occ[slot.op.fecha][san]) return false;
+                        if (slot.reac && reacSem[san]) return false;
+                        if (slot.mov && (movSem[san] || 0) >= MAX_MOVILIDAD_SEMANA) return false;
+                        if (slot.noc && nocDias[san] && (nocDias[san][_fechaMasDias(slot.op.fecha, -1)] || nocDias[san][_fechaMasDias(slot.op.fecha, 1)])) return false;
+                        return true;
+                    }
+                    function cmp(x, y) {
+                        return ((x.fuera ? 1 : 0) - (y.fuera ? 1 : 0)) ||
+                               ((x.alt ? 1 : 0) - (y.alt ? 1 : 0)) ||
+                               ((W[x.san] || 0) - (W[y.san] || 0)) ||
+                               ((V[x.san] || 0) - (V[y.san] || 0)) ||
+                               ((opciones[x.san] || 0) - (opciones[y.san] || 0)) ||
+                               (U[x.san] || '').localeCompare(U[y.san] || '') ||
+                               x.p.nombre.localeCompare(y.p.nombre);
+                    }
+
+                    // 4) Asignación: primero los cupos más restringidos
+                    var orden = slots.slice().sort(function(a, b) {
+                        return (a.cands.length - b.cands.length) || a.op.fecha.localeCompare(b.op.fecha);
+                    });
+                    var hechos = []; // {slot, c}
+                    orden.forEach(function(slot) {
+                        function pref(c) { return (slot.reac && slot.tipo === 'P' && PREF_REACCION_SEMANA.indexOf(c.san) >= 0 && !reacSem[c.san]) ? 1 : 0; }
+                        var disp = slot.cands.filter(function(c) { return libre(slot, c.san); }).sort(function(x, y) { return (pref(y) - pref(x)) || cmp(x, y); });
+                        if (!disp.length) return;
+                        var c = disp[0];
+                        W[c.san] = (W[c.san] || 0) + 1; V[c.san] = (V[c.san] || 0) + 1;
+                        (occ[slot.op.fecha] = occ[slot.op.fecha] || {})[c.san] = true;
+                        if (slot.reac) reacSem[c.san] = true;
+                        if (slot.mov) movSem[c.san] = (movSem[c.san] || 0) + 1;
+                        if (slot.noc) (nocDias[c.san] = nocDias[c.san] || {})[slot.op.fecha] = true;
+                        hechos.push({ slot: slot, c: c });
+                    });
+
+                    // 5) Intercambios: nadie en 0 y carga equilibrada (mueve de quien más tiene a quien menos)
+                    var pool = {};
+                    slots.forEach(function(slot) { slot.cands.forEach(function(c) { pool[c.san] = c; }); });
+                    for (var it = 0; it < 400; it++) {
+                        var zs = Object.keys(pool).sort(function(a, b) { return (W[a] || 0) - (W[b] || 0); });
+                        var hecho = false;
+                        for (var zi = 0; zi < zs.length && !hecho; zi++) {
+                            var z = zs[zi], wz = W[z] || 0;
+                            var mejor = null;
+                            hechos.forEach(function(h) {
+                                var x = h.c.san, wx = W[x] || 0;
+                                if (x === z || wx < wz + 2) return;
+                                if (h.slot.reac && PREF_REACCION_SEMANA.indexOf(x) >= 0) return;
+                                if (h.c.alt !== true && h.slot.mov) { /* titular de área: puede cambiar solo por otro del área */ }
+                                var cz = h.slot.cands.find(function(c) { return c.san === z; });
+                                if (!cz || cz.fuera || (cz.alt && !h.c.alt) || !libre(h.slot, z)) return;
+                                if (!mejor || wx > (W[mejor.h.c.san] || 0)) mejor = { h: h, cz: cz };
+                            });
+                            if (mejor) {
+                                var hh = mejor.h, xs = hh.c.san, sl = hh.slot;
+                                W[xs]--; V[xs] = (V[xs] || 1) - 1;
+                                if (occ[sl.op.fecha]) occ[sl.op.fecha][xs] = false;
+                                if (sl.reac) reacSem[xs] = false;
+                                if (sl.mov) movSem[xs] = Math.max(0, (movSem[xs] || 1) - 1);
+                                if (sl.noc && nocDias[xs]) delete nocDias[xs][sl.op.fecha];
+                                if (sl.noc) (nocDias[z] = nocDias[z] || {})[sl.op.fecha] = true;
+                                W[z] = (W[z] || 0) + 1; V[z] = (V[z] || 0) + 1;
+                                (occ[sl.op.fecha] = occ[sl.op.fecha] || {})[z] = true;
+                                if (sl.reac) reacSem[z] = true;
+                                if (sl.mov) movSem[z] = (movSem[z] || 0) + 1;
+                                hh.c = mejor.cz;
+                                hecho = true;
+                            }
+                        }
+                        if (!hecho) break;
+                    }
+
+                    // 6) Resultado y paso a la memoria para las semanas siguientes
+                    hechos.forEach(function(h) {
+                        var id = h.slot.op.id;
+                        var o = res[id] = res[id] || { profesional: [], gestor: [], tecnico: [] };
+                        o[h.c.cat].push(h.c.p);
+                        asigs.push({ san: h.c.san, fecha: h.slot.op.fecha, eq: true, reac: h.slot.reac, mov: !!h.slot.mov, noc: !!h.slot.noc, opId: id });
+                    });
+                });
+            } catch (err) { console.error('Error calculando sugerencias', err); }
+            return res;
+        }
+
+        function _htmlSugerencias(sug) {
+            if (!sug) return '';
+            var filas = [];
+            [['profesional','👔'],['gestor','🔧'],['tecnico','⚙️']].forEach(function(par) {
+                (sug[par[0]] || []).forEach(function(p) {
+                    filas.push('<div style="color:#2563eb;font-weight:600;font-style:italic;" title="Sugerido por rotación — aún no guardado">💡 ' + par[1] + ' ' + p.nombre + '</div>');
+                });
+            });
+            return filas.join('');
+        }
+
+        window.aceptarSugerencias = async function(opId) {
+            var ids = opId ? [opId] : (operativosFiltradosParaNavegacion || []).map(function(o){ return o.id; }).filter(function(id){ return _sugerenciasOp[id]; });
+            if (!ids.length) return;
+            var updates = {};
+            ids.forEach(function(id) {
+                var sug = _sugerenciasOp[id]; var op = operativos.find(function(o){ return o.id === id; });
+                if (!sug || !op) return;
+                ['profesional','gestor','tecnico'].forEach(function(cat) {
+                    if (!sug[cat] || !sug[cat].length) return;
+                    var actual = (op[cat] || '').trim();
+                    var nuevos = sug[cat].map(function(p){ return p.nombre + ' - ' + (p.celular || ''); }).join(', ');
+                    updates[id + '/' + cat] = actual ? actual + ', ' + nuevos : nuevos;
+                });
+                // Responsable automático (rotación) con el personal ya asignado + el aceptado
+                var fusion = Object.assign({}, op);
+                ['profesional','gestor','tecnico'].forEach(function(cat) {
+                    if (updates[id + '/' + cat] !== undefined) fusion[cat] = updates[id + '/' + cat];
+                });
+                var asigF = _asignadosOp(fusion);
+                var respOk = asigF.some(function(a) { return a.san === sanitize(op.responsable || ''); });
+                if (asigF.length && !respOk) {
+                    var sugR = sugerirResponsable(asigF, op.fecha, id);
+                    if (sugR) { updates[id + '/responsable'] = sugR.nombre; op.responsable = sugR.nombre; }
+                }
+                // Confirmar el operativo si aún no lo está
+                if (!op.estado || String(op.estado).toUpperCase() === 'PROGRAMADO') updates[id + '/estado'] = 'CONFIRMADO';
+            });
+            try {
+                await update(ref(database, 'operativos'), updates);
+            } catch (e) { console.error(e); alert('No se pudieron guardar las sugerencias: ' + e.message); }
+        };
+
         function renderOperativos(data = operativos) {
             const tbody = document.getElementById('operativosBody');
+            _sugerenciasOp = calcularSugerenciasPersonal();
             
             if (data.length === 0) {
                 tbody.innerHTML = `
@@ -7526,8 +8187,19 @@
                 if (op.tecnico) {
                     personalParts.push(formatearPersonalTabla(op.tecnico, '⚙️', 'TÉCNICOS', 8, op.fecha, sanitize(getResponsableOp(op))));
                 }
-                const personalInfo = personalParts.length > 0 
-                    ? `<div style="font-size: 0.75rem; line-height: 1.4;">${personalParts.join('<br>')}</div>`
+                const _sugHTML = _htmlSugerencias(_sugerenciasOp[op.id]);
+                const _btnAceptar = _sugHTML
+                    ? `<div style="margin-top:3px;"><button type="button" onclick="aceptarSugerencias('${op.id}')" style="padding:2px 8px;border:1px solid #2563eb;background:#eff6ff;color:#2563eb;border-radius:5px;font-size:0.68rem;font-weight:700;cursor:pointer;">✔ Aceptar</button></div>`
+                    : '';
+                // Reacción: debe sumar 5; si con lo sugerido no se llega, avisar cuántos hay
+                let _avisoReac = '';
+                if (_esReaccionTipo(op.tipoIVC) && (op.estado || '').toUpperCase() !== 'CANCELADO') {
+                    const _s = _sugerenciasOp[op.id] || {};
+                    const _tot = _asignadosOp(op).length + (_s.profesional||[]).length + (_s.gestor||[]).length + (_s.tecnico||[]).length;
+                    if (_tot < 5) _avisoReac = `<div style="color:#b45309;font-weight:700;margin-top:3px;">⚠️ Reacción incompleta: ${_tot}/5 (sin más disponibles)</div>`;
+                }
+                const personalInfo = (personalParts.length > 0 || _sugHTML || _avisoReac)
+                    ? `<div style="font-size: 0.75rem; line-height: 1.4;">${personalParts.join('<br>')}${_sugHTML}${_btnAceptar}${_avisoReac}</div>`
                     : '<span style="color: #94a3b8; font-size: 0.75rem;">-</span>';
 
                 // Calcular estado de entregables (son de la actividad; los cumple el responsable)
@@ -7590,6 +8262,14 @@
                     </tr>
                 `;
             }).join('');
+
+            var _nSug = sorted.filter(function(o){ return _sugerenciasOp[o.id]; }).length;
+            var _barra = document.getElementById('barraSugerencias');
+            if (_barra) {
+                _barra.style.display = _nSug > 0 ? 'flex' : 'none';
+                document.getElementById('barraSugerenciasTxt').textContent = '💡 ' + _nSug + ' operativo(s) con personal sugerido por rotación.';
+            }
+
         }
 
         function formatDate(dateString) {
@@ -11753,7 +12433,7 @@
                     var _eqBadge2 = _eq2
                         ? '<span style="background:' + _eq2.color + '18;color:' + _eq2.color + ';border:1px solid ' + _eq2.color + '44;font-size:0.6rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:5px;white-space:nowrap;">' + _eq2.icono + ' ' + _eq2.nombre.replace('IVC ','').replace('SUPERVISIÓN ','SUP. ').replace('SOPORTE TÉCNICO ','SOPORTE ').replace('GESTORES / AUXILIARES','GESTORES') + '</span>'
                         : '';
-                    var _bl2 = verificarRestriccion(persona.nombre, _editFechaDropdown, _editHoraDropdown);
+                    var _bl2 = verificarRestriccion(persona.nombre, _editFechaDropdown, _editHoraDropdown, (document.getElementById('editHoraFin') ? document.getElementById('editHoraFin').value : ''));
                 if (!_bl2.bloqueado) { var _d4 = estaEnDescanso(persona.nombre, _editFechaDropdown); if (_d4.enDescanso) _bl2 = { bloqueado: true, motivo: '😴 ' + _d4.motivo }; }
                     var _restBadge2 = _bl2.bloqueado ? '<span style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;font-size:0.6rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-left:5px;">🚫 RESTRICCION</span>' : '';
                     // Conflicto de día: verificar si ya está programado el mismo día
@@ -11766,6 +12446,7 @@
                             if (op.id === editingOperativoId) return false; // excluir el que editamos
                             if (op.fecha !== _fechaEdit) return false;
                             if (op.estado && op.estado.toUpperCase() === 'CANCELADO') return false;
+                            if (esReunionAreas(op.tipoIVC)) return false;
                             return (op.profesional && sanitize(op.profesional).indexOf(_npE) >= 0) ||
                                    (op.gestor      && sanitize(op.gestor).indexOf(_npE)      >= 0) ||
                                    (op.tecnico     && sanitize(op.tecnico).indexOf(_npE)     >= 0);
@@ -11896,6 +12577,7 @@
                 if (op.id === editingOperativoId) return false;
                 if (op.fecha !== fecha || !fecha) return false;
                 if (op.estado && op.estado.toUpperCase() === 'CANCELADO') return false;
+                if (esReunionAreas(op.tipoIVC)) return false;
                 return (op.profesional && sanitize(op.profesional).indexOf(_npSel) >= 0) ||
                        (op.gestor      && sanitize(op.gestor).indexOf(_npSel)      >= 0) ||
                        (op.tecnico     && sanitize(op.tecnico).indexOf(_npSel)     >= 0);
@@ -11913,7 +12595,7 @@
             }
 
             // Verificar restricción de días/horarios
-            var bloqueo = verificarRestriccion(nombre, fecha, horaIni);
+            var bloqueo = verificarRestriccion(nombre, fecha, horaIni, (document.getElementById('editHoraFin') ? document.getElementById('editHoraFin').value : ''));
             if (!bloqueo.bloqueado) { var _d5 = estaEnDescanso(nombre, fecha); if (_d5.enDescanso) bloqueo = { bloqueado: true, motivo: '😴 ' + _d5.motivo }; }
             if (bloqueo.bloqueado) {
                 window._restriccionPendiente = { _esEditar: true, categoria: categoria, nombre: nombre };
@@ -11942,7 +12624,7 @@
                 var horaIni2 = document.getElementById('editHoraInicio') ? document.getElementById('editHoraInicio').value : '';
                 var bloqueados2 = [];
                 editPersonalSeleccionado[categoria] = data.map(function(p){ return p.nombre; }).filter(function(nombre) {
-                    var b2 = verificarRestriccion(nombre, fecha2, horaIni2);
+                    var b2 = verificarRestriccion(nombre, fecha2, horaIni2, (document.getElementById('editHoraFin') ? document.getElementById('editHoraFin').value : ''));
                     if (!b2.bloqueado) { var _d6 = estaEnDescanso(nombre, fecha2); if (_d6.enDescanso) b2 = { bloqueado: true, motivo: '😴 ' + _d6.motivo }; }
                     if (b2.bloqueado) { bloqueados2.push(nombre + ': ' + b2.motivo); return false; }
                     return true;
@@ -13201,7 +13883,7 @@
                     entidades:          String(col(r, 'entidades') || '').trim(),
                     solicitudVehiculos: String(col(r, 'vehiculos') || '').replace(/null|NaN/g,'').trim() || 'N/A',
                     observaciones:      String(col(r, 'observaciones') || '').trim(),
-                    estado:             'PROGRAMADO',
+                    estado:             'CONFIRMADO',
                     timestamp:          Date.now()
                 });
             }
@@ -13344,6 +14026,13 @@
                     var opData = Object.assign({}, op);
                     delete opData._duplicado;
                     opData.timestamp = Date.now();
+                    opData.estado = 'CONFIRMADO';           // al cargar, el operativo queda confirmado
+                    var _asigImp = _asignadosOp(opData);
+                    if (!opData.responsable && _asigImp.length) {
+                        var _sugR = sugerirResponsable(_asigImp, opData.fecha, null);
+                        if (_sugR) opData.responsable = _sugR.nombre;   // responsable por rotación
+                    }
+                    if (opData.responsable) operativos.push(Object.assign({ id: newRef.key }, opData)); // cuenta para la rotación del siguiente
                     await set(newRef, opData);
                     idsGuardados.push(newRef.key);
                     guardados++;
@@ -13532,8 +14221,38 @@
                 String(d.getDate()).padStart(2,'0');
         }
 
-        function verificarRestriccion(nombre, fecha, horaInicio) {
+        // Horarios de estudio: la persona no puede ir a operativos que se crucen con su clase.
+        // Se suma 1 hora antes (para llegar a clase) y 1 hora después (para llegar al operativo).
+        // Claves por día de la semana (0=Dom … 6=Sáb) → [inicio, fin] de clase.
+        function _minHHMM(h) { var m = /^(\d{1,2}):(\d{2})/.exec(h || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+        function _chocaConEstudio(nombre, fecha, horaInicio, horaFin) {
+            var cfg = (typeof HORARIOS_ESTUDIO !== 'undefined' && HORARIOS_ESTUDIO) ? HORARIOS_ESTUDIO[sanitize(nombre)] : null;
+            if (!cfg || !fecha) return null;
+            var a = _minHHMM(horaInicio);
+            if (a === null) return null;
+            var b = _minHHMM(horaFin);
+            if (b === null) b = a + 1;                 // sin hora fin: se valida desde el inicio
+            if (b <= a) b += 1440;                     // cruza la medianoche
+            var buf = HORAS_TRASLADO_ESTUDIO * 60;
+            var dow0 = new Date(fecha + 'T12:00:00').getDay();
+            for (var off = 0; off <= 1; off++) {       // el día del operativo y el siguiente (si cruza medianoche)
+                var dia = (dow0 + off) % 7, cl = cfg[dia];
+                if (!cl) continue;
+                var ini = _minHHMM(cl[0]) - buf + off * 1440;
+                var fin = _minHHMM(cl[1]) + 1 + buf + off * 1440;   // 21:59 → 22:00 + 1h = 23:00
+                if (a < fin && b > ini) {
+                    function hm(m) { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
+                    return '📚 Estudia (' + cl[0] + '–' + cl[1] + ' + 1 h de traslado: ' + hm(ini) + '–' + hm(fin) + ')';
+                }
+            }
+            return null;
+        }
+
+        function verificarRestriccion(nombre, fecha, horaInicio, horaFin) {
             if (!nombre) return { bloqueado: false, motivo: '' };
+
+            var _est = _chocaConEstudio(nombre, fecha, horaInicio, horaFin);
+            if (_est) return { bloqueado: true, motivo: _est };
 
             var key = sanitize(nombre).replace(/[^A-Z0-9]/g, '_');
 
@@ -14870,8 +15589,8 @@
 
         // ── Encuesta Disponibilidad ────────────────────────────────────────────
         var TODOS_CONTRATISTAS = [
-          'ADRIANA FORERO','ALEXANDRA MONTENEGRO','ANDRÉS ARIAS','ANDRÉS PALACIO',
-          'ANLLY ROJAS','CAMILO VARGAS','CAROL FORERO',
+          'ALEXANDRA MONTENEGRO','ANDRÉS ARIAS','ANDRÉS PALACIO',
+          'CAMILO VARGAS','CAROL FORERO',
           'DANIELA QUINTERO','DAVID ALBA','EFREN SIERRA','GIOVANNY GAVIRIA',
           'HECTOR RAMIREZ','HENRY FORIGUA','JAIRO LOZANO','JEISSON RODRÍGUEZ',
           'JENIFER ESPINOSA','JENIFER NIETO','JENNY ARROYO','JHON LADINO',
@@ -15848,11 +16567,9 @@
 
         const PERSONAL = {
             profesionales: [
-                {nombre: 'ADRIANA FORERO', celular: ''},
                 {nombre: 'ALEJANDRO FERNANDEZ', celular: ''},
                 {nombre: 'ANDRÉS ARIAS', celular: ''},
                 {nombre: 'ANGIEE ÁVILA', celular: ''},
-                {nombre: 'ANLLY ROJAS', celular: ''},
                 {nombre: 'CORONEL WILSON VERGARA', celular: ''},
                 {nombre: 'DANIELA MARTINEZ', celular: ''},
                 {nombre: 'DAVID ALBA', celular: ''},
