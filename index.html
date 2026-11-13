@@ -7565,6 +7565,11 @@
             // Reacción: recalcular selección automática si fue puesta por el sistema o está vacía
             _autoPersonalSiAplica();
         });
+        // Las restricciones por franja horaria dependen de la hora: refrescar también al cambiarla
+        ['horaInicio','horaFin'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener('change', function() { window._refrescarListasPersonal(); });
+        });
         document.getElementById('filterEstado').addEventListener('change', aplicarFiltrosGlobales);
 
         function resetForm() {
@@ -14203,11 +14208,26 @@
                 var val = snap.val();
                 Object.keys(val).forEach(function(k) { _restriccionesDB[k] = val[k]; });
             }
+            window._refrescarListasPersonal();
         });
+
+        // Vuelve a pintar las listas de personal del formulario para que los cambios de
+        // restricciones / disponibilidad se reflejen sin tener que cambiar la fecha.
+        var _refrescarListasTimer = null;
+        window._refrescarListasPersonal = function() {
+            clearTimeout(_refrescarListasTimer);
+            _refrescarListasTimer = setTimeout(function() {
+                try {
+                    if (typeof renderizarOpciones !== 'function') return;
+                    ['profesional','gestor','tecnico'].forEach(function(c) { renderizarOpciones(c); });
+                } catch (e) { console.warn('refrescar listas:', e); }
+            }, 150);
+        };
 
         // Escuchar días no disponibles reportados semanalmente
         onValue(ref(database, 'dias_no_disp'), function(snap) {
             _diasNoDispDB = snap.exists() ? snap.val() : {};
+            window._refrescarListasPersonal();
         });
 
         // Calcula el lunes de la semana a la que pertenece una fecha ISO
@@ -14273,9 +14293,11 @@
                     }
                 }
                 if (rest.franjas && rest.franjas.length > 0 && horaInicio) {
+                    var _a = _minHHMM(horaInicio), _b = _minHHMM(horaFin);
+                    if (_b === null || _b <= _a) _b = _a + 1;   // sin hora fin válida: solo el inicio
                     for (var i = 0; i < rest.franjas.length; i++) {
                         var fr = rest.franjas[i];
-                        if (fr.ini && fr.fin && horaInicio >= fr.ini && horaInicio < fr.fin) {
+                        if (fr.ini && fr.fin && _a < _minHHMM(fr.fin) && _b > _minHHMM(fr.ini)) {
                             return { bloqueado: true, motivo: 'Restricción en horario ' + fr.ini + '-' + fr.fin + (rest.observacion ? ' (' + rest.observacion + ')' : '') };
                         }
                     }
@@ -14670,7 +14692,10 @@
             var obs = document.getElementById('restObservacion').value.trim();
             var key = sanitize(nombre).replace(/[^A-Z0-9]/g, '_');
             try {
-                await set(ref(database, 'restricciones/' + key), { nombre: nombre, diasSemana: dias, franjas: franjas, observacion: obs });
+                var _prev = _restriccionesDB[key] || {};
+                var _nuevo = { nombre: nombre, diasSemana: dias, franjas: franjas, observacion: obs };
+                if (_prev.infoContrato) _nuevo.infoContrato = _prev.infoContrato;
+                await set(ref(database, 'restricciones/' + key), _nuevo);
                 alert('Restricciones guardadas para ' + nombre);
                 window.abrirRestricciones();
                 document.getElementById('restContratista').value = nombre;
