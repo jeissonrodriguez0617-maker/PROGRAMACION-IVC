@@ -7798,12 +7798,12 @@
 
                 // Filtro de contratista
                 var matchContratista = true;
-                if (_filtroContratistaActivo) {
+                if (_filtroContratistaActivo.length > 0) {
                     var _camposP = [op.profesional, op.gestor, op.tecnico];
                     matchContratista = _camposP.some(function(campo) {
                         if (!campo) return false;
                         return parsearNombres(campo).some(function(n) {
-                            return sanitize(n.trim()) === _filtroContratistaActivo;
+                            return _filtroContratistaActivo.indexOf(sanitize(n.trim())) >= 0;
                         });
                     });
                 }
@@ -15452,7 +15452,8 @@
         };
 
         // ── Filtro de contratista en sección operativos ──────────────────
-        var _filtroContratistaActivo = ''; // sanitize del nombre seleccionado
+        var _filtroContratistaActivo = []; // lista de nombres (sanitize) seleccionados
+        var _filtroContratistaNombres = {}; // sanitize -> nombre original
 
         window.toggleFiltroContratista = function() {
             var menu = document.getElementById('filtroContratistaMenu');
@@ -15485,7 +15486,8 @@
             operativos.forEach(function(op) {
                 if (op.estado && op.estado.toUpperCase() === 'CANCELADO') return;
                 if (fi && ff && (op.fecha < fi || op.fecha > ff)) return;
-                var esAct = !esOperativoCompleto(op.tipoIVC);
+                // El equipo de reacción / disponibilidad se suma como operativo
+                var esAct = !(esOperativoCompleto(op.tipoIVC) || _esReaccionTipo(op.tipoIVC));
                 var campos = [op.profesional, op.gestor, op.tecnico];
                 campos.forEach(function(campo) {
                     if (!campo) return;
@@ -15511,30 +15513,47 @@
                 var badgeActs = p.acts > 0 ? '<span style="background:#ede9fe;color:#6d28d9;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:2px;">' + p.acts + ' act</span>' : '';
                 var div = document.createElement('div');
                 div.style.cssText = 'padding:6px 12px;cursor:pointer;font-size:0.83rem;color:#374151;display:flex;align-items:center;justify-content:space-between;gap:6px;';
-                div.onmouseover = function(){ this.style.background='#f8fafc'; };
-                div.onmouseout  = function(){ this.style.background=''; };
                 var sSan = sanitize(p.nombre);
-                if (sSan === _filtroContratistaActivo) div.style.background = '#eff6ff';
-                div.innerHTML = '<span style="font-weight:600;">' + p.nombre + '</span>' +
+                _filtroContratistaNombres[sSan] = p.nombre;
+                var _sel = _filtroContratistaActivo.indexOf(sSan) >= 0;
+                var _bgSel = function(){ return _filtroContratistaActivo.indexOf(sSan) >= 0 ? '#eff6ff' : ''; };
+                div.style.background = _bgSel();
+                div.onmouseover = function(){ this.style.background='#f8fafc'; };
+                div.onmouseout  = function(){ this.style.background=_bgSel(); };
+                div.innerHTML = '<span style="display:flex;align-items:center;gap:8px;"><input type="checkbox" ' + (_sel ? 'checked ' : '') + 'style="pointer-events:none;accent-color:#1e40af;"><span style="font-weight:600;">' + p.nombre + '</span></span>' +
                                 '<span style="display:flex;gap:2px;align-items:center;flex-shrink:0;">' + badgeTotal + badgeOps + badgeActs + '</span>';
-                div.onclick = function() { window.seleccionarContratista(sSan, p.nombre); };
+                div.onclick = function() {
+                    window.seleccionarContratista(sSan, p.nombre);
+                    var cb = div.querySelector('input'); if (cb) cb.checked = _filtroContratistaActivo.indexOf(sSan) >= 0;
+                    div.style.background = _bgSel();
+                };
                 opcDiv.appendChild(div);
             });
         };
 
         window.seleccionarContratista = function(san, nombre) {
-            _filtroContratistaActivo = (_filtroContratistaActivo === san) ? '' : san;
+            // Selección múltiple: click alterna; el menú queda abierto
+            if (san) {
+                _filtroContratistaNombres[san] = nombre;
+                var i = _filtroContratistaActivo.indexOf(san);
+                if (i >= 0) _filtroContratistaActivo.splice(i, 1); else _filtroContratistaActivo.push(san);
+            }
+            var n = _filtroContratistaActivo.length;
             var lbl = document.getElementById('filtroContratistaLabel');
             var btn = document.getElementById('filtroContratistaBtn');
-            if (lbl) lbl.textContent = _filtroContratistaActivo ? '👤 ' + nombre : '👤 Todos los contratistas';
-            if (btn) btn.style.borderColor = _filtroContratistaActivo ? '#1e40af' : '#e2e8f0';
-            var menu = document.getElementById('filtroContratistaMenu');
-            if (menu) menu.style.display = 'none';
+            if (lbl) lbl.textContent = n === 0 ? '👤 Todos los contratistas'
+                : n === 1 ? '👤 ' + (_filtroContratistaNombres[_filtroContratistaActivo[0]] || _filtroContratistaActivo[0])
+                : '👤 ' + n + ' contratistas';
+            if (btn) btn.style.borderColor = n ? '#1e40af' : '#e2e8f0';
             filterOperativos();
         };
 
         window.filtroContratistaLimpiar = function() {
+            _filtroContratistaActivo = [];
             window.seleccionarContratista('', '');
+            window.poblarFiltroContratista();
+            var menu = document.getElementById('filtroContratistaMenu');
+            if (menu) menu.style.display = 'none';
         };
 
         // Cerrar al hacer click fuera
