@@ -3879,11 +3879,11 @@
                 <div style="border:2px solid #e2e8f0;border-radius:8px;padding:0.6rem 0.8rem;background:#f8fafc;display:flex;flex-direction:column;gap:6px;">
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#1e40af;font-weight:600;" onmouseover="this.style.background='#eff6ff';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
                         <input type="checkbox" id="pdf_chk_ponal_mc" onchange="actualizarListaOperativosCronograma()" style="width:15px;height:15px;accent-color:#1e40af;cursor:pointer;">
-                        🚓 PONAL MC / Medidas Correctivas
+                        🚓 PONAL MC / RNMC PONAL / Medidas Correctivas
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#1e40af;font-weight:600;" onmouseover="this.style.background='#eff6ff';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
                         <input type="checkbox" id="pdf_chk_cai" onchange="actualizarListaOperativosCronograma()" style="width:15px;height:15px;accent-color:#1e40af;cursor:pointer;">
-                        🏢 Comandantes de CAI
+                        🏢 Jurisdicción CAI
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#1e40af;font-weight:600;" onmouseover="this.style.background='#eff6ff';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
                         <input type="checkbox" id="pdf_chk_patrulleros" onchange="actualizarListaOperativosCronograma()" style="width:15px;height:15px;accent-color:#1e40af;cursor:pointer;">
@@ -3891,7 +3891,7 @@
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#1e40af;font-weight:600;" onmouseover="this.style.background='#eff6ff';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
                         <input type="checkbox" id="pdf_chk_estacion_apoyo" onchange="actualizarListaOperativosCronograma()" style="width:15px;height:15px;accent-color:#1e40af;cursor:pointer;">
-                        🚨 PONAL Policía de Estación Apoyo
+                        🚨 Apoyo PONAL (Comandante CAI / Apoyo PONAL / RNMC PONAL)
                     </label>
                 </div>
                 <div style="font-size:0.75rem;color:#64748b;margin-top:4px;">Sin marcas = todos los operativos · Con marcas = solo los que tengan esa(s) entidad(es)</div>
@@ -6320,6 +6320,29 @@
                 .trim();
         }
 
+        // ── Reconocimiento de entidades PONAL (RNMC, Apoyo PONAL, Comandantes de CAI, etc.) ──
+        function entEsPonalMC(t) {
+            var e = sanitize(t);
+            return e.includes('PONAL MC') || e.includes('MEDIDAS CORRECTIVAS') || /\bRNMC\b/.test(e) || e === 'MC';
+        }
+        function entEsComandante(t) {            // Comandante CAI Álamos / Ferias / Bachué / Jaboque / etc.
+            return sanitize(t).includes('COMANDANTE');
+        }
+        function entEsApoyoPonal(t) {            // Apoyo PONAL / Policía de Estación
+            var e = sanitize(t);
+            if (e.includes('APOYO') && e.includes('PONAL')) return true;
+            if (e.includes('COMANDANTE') || /\bRNMC\b/.test(e)) return true;   // Comandante de CAI o RNMC PONAL
+            return e.includes('ESTACION') && (e.includes('POLICIA') || e.includes('PONAL'));
+        }
+        function entEsPatrulleros(t) {
+            var e = sanitize(t);
+            return e.includes('PATRULLERO') || e.includes('CORONEL MANCERA') || e.includes('PONAL CORONEL');
+        }
+        function entEsPonal(t) {                 // cualquier entidad de la Policía
+            var e = sanitize(t);
+            return e.includes('PONAL') || /\bRNMC\b/.test(e) || e.includes('COMANDANTE') || e.includes('MEDIDAS CORRECTIVAS');
+        }
+
 
         // ── Disponibilidad semanal: helpers ────────────────────────────────
         // Devuelve el set (Set<string sanitized>) de personas de disponibilidad
@@ -7811,14 +7834,20 @@
                 // Filtro de entidad acompañante
                 var matchEntidad = true;
                 if (_filtroEntidadActiva) {
-                    var entidadesOp = (op.entidades || '').toUpperCase();
+                    var entidadesOp = (op.entidades || '');
                     if (_filtroEntidadActiva === 'OTRAS ENTIDADES') {
-                        // Tiene entidades pero NO es PONAL MC ni COMANDANTES
-                        matchEntidad = !!entidadesOp.trim() &&
-                            !entidadesOp.includes('PONAL MC') &&
-                            !entidadesOp.includes('COMANDANTE');
+                        // Tiene entidades pero NO es de la Policía (PONAL MC, RNMC, Apoyo, Comandantes)
+                        matchEntidad = !!entidadesOp.trim() && !entEsPonal(entidadesOp);
+                    } else if (_filtroEntidadActiva === 'PONAL MC') {
+                        matchEntidad = entEsPonalMC(entidadesOp);
+                    } else if (_filtroEntidadActiva === 'JURISDICCIÓN CAI') {
+                        matchEntidad = entEsComandante(entidadesOp);
+                    } else if (_filtroEntidadActiva === 'APOYO PONAL') {
+                        matchEntidad = entEsApoyoPonal(entidadesOp);
+                    } else if (_filtroEntidadActiva === 'PONAL (TODOS)') {
+                        matchEntidad = entEsPonal(entidadesOp);
                     } else {
-                        matchEntidad = entidadesOp.includes(_filtroEntidadActiva);
+                        matchEntidad = sanitize(entidadesOp).includes(_filtroEntidadActiva);
                     }
                 }
 
@@ -10267,18 +10296,13 @@
         };
 
         // ── Helper: detectar si un operativo coincide con los checks de entidades ──
-        function entidad_coincide(op, chkPoналMC, chkCai, chkPatrulleros, chkEstacion) {
-            // Si ninguno marcado → pasan todos
-            if (!chkPoналMC && !chkCai && !chkPatrulleros && !chkEstacion) return true;
-            var e = (op.entidades || '').toUpperCase();
-            // PONAL Policía de Estación Apoyo (sin tildes: "Policía de Estación", "ESTACION DE POLICIA", etc.)
-            if (chkEstacion) {
-                var eSin = sanitize(op.entidades || '');
-                if (eSin.includes('ESTACION') && (eSin.includes('POLICIA') || eSin.includes('PONAL'))) return true;
-            }
-            if (chkPoналMC && (e.includes('PONAL MC') || e.includes('MEDIDAS CORRECTIVAS') || e === 'MC')) return true;
-            if (chkCai && (e.includes('COMANDANTE') && (e.includes('CAI') || e.includes('DE CAI')))) return true;
-            if (chkPatrulleros && (e.includes('PATRULLERO') || e.includes('CORONEL MANCERA') || e.includes('PONAL CORONEL'))) return true;
+        function entidad_coincide(op, chkPonalMC, chkCai, chkPatrulleros, chkEstacion) {
+            if (!chkPonalMC && !chkCai && !chkPatrulleros && !chkEstacion) return true;
+            var t = op.entidades || '';
+            if (chkEstacion && entEsApoyoPonal(t)) return true;
+            if (chkPonalMC && entEsPonalMC(t)) return true;
+            if (chkCai && entEsComandante(t)) return true;
+            if (chkPatrulleros && entEsPatrulleros(t)) return true;
             return false;
         }
 
@@ -11012,7 +11036,7 @@
                         
                         // Solo procesar si contiene alguna de las palabras clave
                         var textoUpper = textoEntidades.toUpperCase();
-                        if (textoUpper.includes('PONAL MC') || textoUpper.includes('COMANDANTE') || textoUpper.includes('PONAL')) {
+                        if (entEsPonal(textoEntidades)) {
                             // Repintar fondo
                             var rowIdxEnt = data.row.index;
                             var opEnt = operativosFiltrados[rowIdxEnt];
@@ -11044,9 +11068,9 @@
                                 
                                 partes.forEach(function(parte, idx) {
                                     var parteUpper = parte.trim().toUpperCase();
-                                    var esPoналMC = parteUpper.includes('PONAL MC');
+                                    var esPoналMC = entEsPonalMC(parte);
                                     var esComandante = parteUpper.includes('COMANDANTE');
-                                    var esPoнал = parteUpper === 'PONAL' || parteUpper.startsWith('PONAL ') || parteUpper.endsWith(' PONAL');
+                                    var esPoнал = entEsPonal(parte);
                                     
                                     // Separador
                                     if (idx > 0) {
@@ -15583,7 +15607,7 @@
         window._poblarEntidadesMenu = function(busqueda) {
             var cont = document.getElementById('filtroEntidadOpciones');
             if (!cont) return;
-            var opciones = ['PONAL MC', 'COMANDANTES', 'OTRAS ENTIDADES'];
+            var opciones = ['PONAL (TODOS)', 'PONAL MC', 'JURISDICCIÓN CAI', 'APOYO PONAL', 'OTRAS ENTIDADES'];
             if (busqueda) opciones = opciones.filter(function(e){ return e.includes(busqueda.toUpperCase()); });
             cont.innerHTML = opciones.map(function(e) {
                 var activo = _filtroEntidadActiva === e;
@@ -16550,11 +16574,11 @@
       <div style="border:2px solid #e2e8f0;border-radius:8px;padding:0.6rem 0.8rem;background:#f8fafc;display:flex;flex-direction:column;gap:6px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#15803d;font-weight:600;" onmouseover="this.style.background='#f0fdf4';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
           <input type="checkbox" id="xls_chk_ponal_mc" onchange="xls_actualizarLista()" style="width:15px;height:15px;accent-color:#15803d;cursor:pointer;">
-          🚓 PONAL MC / Medidas Correctivas
+          🚓 PONAL MC / RNMC PONAL / Medidas Correctivas
         </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#15803d;font-weight:600;" onmouseover="this.style.background='#f0fdf4';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
           <input type="checkbox" id="xls_chk_cai" onchange="xls_actualizarLista()" style="width:15px;height:15px;accent-color:#15803d;cursor:pointer;">
-          🏢 Comandantes de CAI
+          🏢 Jurisdicción CAI
         </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#15803d;font-weight:600;" onmouseover="this.style.background='#f0fdf4';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
           <input type="checkbox" id="xls_chk_patrulleros" onchange="xls_actualizarLista()" style="width:15px;height:15px;accent-color:#15803d;cursor:pointer;">
@@ -16562,7 +16586,7 @@
         </label>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;color:#15803d;font-weight:600;" onmouseover="this.style.background='#f0fdf4';this.style.borderRadius='5px'" onmouseout="this.style.background=''">
           <input type="checkbox" id="xls_chk_estacion_apoyo" onchange="xls_actualizarLista()" style="width:15px;height:15px;accent-color:#15803d;cursor:pointer;">
-          🚨 PONAL Policía de Estación Apoyo
+          🚨 Apoyo PONAL (Comandante CAI / Apoyo PONAL / RNMC PONAL)
         </label>
       </div>
       <div style="font-size:0.75rem;color:#64748b;margin-top:4px;">Sin marcas = todos · Con marcas = solo los que tengan esa(s) entidad(es)</div>
